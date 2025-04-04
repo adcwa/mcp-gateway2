@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/wangfeng/mcp-gateway2/internal/api"
+	"github.com/wangfeng/mcp-gateway2/internal/db"
 	"github.com/wangfeng/mcp-gateway2/internal/repository"
 	"github.com/wangfeng/mcp-gateway2/pkg/mcp"
 	"github.com/wangfeng/mcp-gateway2/pkg/models"
@@ -32,9 +33,48 @@ func main() {
 		log.Fatalf("Failed to create wasm directory: %v", err)
 	}
 
-	// Initialize repositories
-	httpRepo := repository.NewInMemoryHTTPInterfaceRepository()
-	mcpRepo := repository.NewInMemoryMCPServerRepository()
+	// Initialize database connection
+	// Set default config from environment variables or use defaults
+	dbConfig := db.GetConfig()
+
+	// Use PostgreSQL if environment variable is set
+	usePostgresEnv := os.Getenv("USE_POSTGRES")
+	usePostgres := usePostgresEnv == "" || usePostgresEnv == "true" || usePostgresEnv == "1"
+
+	var httpRepo repository.HTTPInterfaceRepository
+	var mcpRepo repository.MCPServerRepository
+
+	if usePostgres {
+		// Connect to PostgreSQL database
+		database, err := db.ConnectDB()
+		if err != nil {
+			log.Fatalf("Failed to connect to database: %v", err)
+		}
+		defer database.Close()
+
+		// PostgreSQL repositories
+		pgHttpRepo := repository.NewPgHTTPInterfaceRepository(database)
+		pgMcpRepo := repository.NewPgMCPServerRepository(database)
+
+		// Initialize tables
+		if err := pgHttpRepo.Initialize(ctx); err != nil {
+			log.Fatalf("Failed to initialize HTTP interface repository: %v", err)
+		}
+		if err := pgMcpRepo.Initialize(ctx); err != nil {
+			log.Fatalf("Failed to initialize MCP server repository: %v", err)
+		}
+
+		httpRepo = pgHttpRepo
+		mcpRepo = pgMcpRepo
+
+		log.Printf("Using PostgreSQL repositories: %s@%s:%s/%s",
+			dbConfig.User, dbConfig.Host, dbConfig.Port, dbConfig.Database)
+	} else {
+		// In-memory repositories (for development)
+		httpRepo = repository.NewInMemoryHTTPInterfaceRepository()
+		mcpRepo = repository.NewInMemoryMCPServerRepository()
+		log.Println("Using in-memory repositories")
+	}
 
 	// Initialize MCP service
 	mcpService, err := mcp.NewMCPService(wasmDir)
@@ -79,7 +119,19 @@ func main() {
 	})
 
 	// Pre-add some example HTTP interfaces for testing
-	addExampleHTTPInterfaces(ctx, httpRepo)
+	// Only in development mode or if no interfaces exist
+	if !usePostgres {
+		addExampleHTTPInterfaces(ctx, httpRepo)
+	} else {
+		// Check if we have any interfaces
+		interfaces, err := httpRepo.GetAll(ctx)
+		if err != nil {
+			log.Printf("Failed to check for existing interfaces: %v", err)
+		} else if len(interfaces) == 0 {
+			log.Println("No HTTP interfaces found, adding examples")
+			addExampleHTTPInterfaces(ctx, httpRepo)
+		}
+	}
 
 	// Add debug routes
 	router.GET("/debug/routes", func(c *gin.Context) {
@@ -89,6 +141,14 @@ func main() {
 			routesList = append(routesList, fmt.Sprintf("%s %s", route.Method, route.Path))
 		}
 		c.JSON(http.StatusOK, routesList)
+	})
+
+	// Add database configuration info endpoint (for debugging)
+	router.GET("/debug/db-config", func(c *gin.Context) {
+		config := db.GetConfig()
+		// Don't expose the password
+		config.Password = "********"
+		c.JSON(http.StatusOK, config)
 	})
 
 	// Determine port to listen on

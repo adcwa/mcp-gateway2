@@ -1,0 +1,15 @@
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env.test.local
+
+
+
+# Go
+bin/
+
+# Docker
+docker-compose.override.yml
+
