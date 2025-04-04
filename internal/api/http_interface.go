@@ -3,6 +3,8 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/wangfeng/mcp-gateway2/internal/repository"
@@ -33,6 +35,7 @@ func (h *HTTPInterfaceHandler) RegisterRoutes(router *gin.Engine) {
 		httpGroup.GET("/:id/versions", h.GetHTTPInterfaceVersions)
 		httpGroup.GET("/:id/versions/:version", h.GetHTTPInterfaceByVersion)
 		httpGroup.GET("/:id/openapi", h.GetOpenAPI)
+		httpGroup.POST("/from-curl", h.CreateFromCurl)
 	}
 }
 
@@ -172,4 +175,121 @@ func (h *HTTPInterfaceHandler) GetOpenAPI(c *gin.Context) {
 
 	openAPI := httpInterface.ConvertToOpenAPI()
 	c.JSON(http.StatusOK, openAPI)
+}
+
+// CurlCommand represents a curl command to be converted to an HTTP interface
+type CurlCommand struct {
+	Command     string `json:"command" binding:"required"`
+	Name        string `json:"name" binding:"required"`
+	Description string `json:"description"`
+}
+
+// CreateFromCurl creates a new HTTP interface from a curl command
+func (h *HTTPInterfaceHandler) CreateFromCurl(c *gin.Context) {
+	var curlCmd CurlCommand
+	if err := c.ShouldBindJSON(&curlCmd); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Parse the curl command
+	httpInterface, err := parseCurlCommand(curlCmd.Command, curlCmd.Name, curlCmd.Description)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse curl command: " + err.Error()})
+		return
+	}
+
+	// Persist the new interface
+	if err := h.repo.Create(c.Request.Context(), httpInterface); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, httpInterface)
+}
+
+// parseCurlCommand parses a curl command and converts it to an HTTP interface
+func parseCurlCommand(curlCmd, name, description string) (*models.HTTPInterface, error) {
+	// Initialize HTTP interface
+	httpInterface := &models.HTTPInterface{
+		Name:        name,
+		Description: description,
+		Headers:     []models.Header{},
+		Parameters:  []models.Param{},
+	}
+
+	// Clean up the command (remove "curl" prefix if present)
+	curlCmd = strings.TrimSpace(curlCmd)
+	if strings.HasPrefix(curlCmd, "curl ") {
+		curlCmd = strings.TrimPrefix(curlCmd, "curl ")
+	}
+
+	// Extract method
+	methodRegex := regexp.MustCompile(`-X\s+([A-Z]+)`)
+	if methodMatch := methodRegex.FindStringSubmatch(curlCmd); len(methodMatch) > 1 {
+		httpInterface.Method = methodMatch[1]
+	} else {
+		// Default to GET if no method specified
+		httpInterface.Method = "GET"
+		// Check if there's a data flag, which implies POST
+		if strings.Contains(curlCmd, " -d ") || strings.Contains(curlCmd, " --data ") {
+			httpInterface.Method = "POST"
+		}
+	}
+
+	// Extract URL
+	urlRegex := regexp.MustCompile(`[^-]('|")?(https?://[^'"]+)('|")?`)
+	if urlMatch := urlRegex.FindStringSubmatch(curlCmd); len(urlMatch) > 2 {
+		httpInterface.Path = urlMatch[2]
+	} else {
+		return nil, fmt.Errorf("no URL found in curl command")
+	}
+
+	// Extract headers
+	headerRegex := regexp.MustCompile(`-H\s+['"]([^:]+):\s*([^'"]+)['"]`)
+	headerMatches := headerRegex.FindAllStringSubmatch(curlCmd, -1)
+	for _, match := range headerMatches {
+		if len(match) > 2 {
+			header := models.Header{
+				Name:        match[1],
+				Description: "",
+				Required:    true,
+				Type:        "string",
+			}
+			httpInterface.Headers = append(httpInterface.Headers, header)
+		}
+	}
+
+	// Extract data/body if present
+	dataRegex := regexp.MustCompile(`-d\s+['"]([^'"]+)['"]`)
+	if dataMatch := dataRegex.FindStringSubmatch(curlCmd); len(dataMatch) > 1 {
+		// Check if data is JSON
+		if strings.HasPrefix(dataMatch[1], "{") && strings.HasSuffix(dataMatch[1], "}") {
+			httpInterface.RequestBody = &models.Body{
+				ContentType: "application/json",
+				Schema:      `{"type": "object"}`,
+				Example:     dataMatch[1],
+			}
+		} else {
+			httpInterface.RequestBody = &models.Body{
+				ContentType: "application/x-www-form-urlencoded",
+				Schema:      `{"type": "string"}`,
+				Example:     dataMatch[1],
+			}
+		}
+	}
+
+	// Add a default response
+	httpInterface.Responses = []models.Response{
+		{
+			StatusCode:  200,
+			Description: "Successful response",
+			Body: &models.Body{
+				ContentType: "application/json",
+				Schema:      `{"type": "object"}`,
+			},
+		},
+	}
+
+	return httpInterface, nil
 }

@@ -5,6 +5,7 @@ MCP-Gateway is a service that provides MCP Server unified management capabilitie
 ## Features
 
 - HTTP interface management: Support for exporting OpenAPI structures, converting HTTP to MCP Server YAML format, and versioning of interfaces.
+  - Convert curl commands to HTTP interfaces: Easily transform curl commands into properly formatted HTTP interfaces.
 - MCP Server management: Support for managing MCP Server metadata, selecting multiple HTTP structures to update metadata, publishing MCP Servers (compiling to WebAssembly for dynamic loading), and version control.
 - Routing management: Support for route configuration, such as matching `xxx/mcp-server/{name}` to MCP Server with name `{name}`.
 
@@ -58,6 +59,18 @@ This will:
 4. Activate the MCP Server
 5. Invoke a tool on the MCP Server
 
+To test the curl conversion feature, run the curl test client:
+
+```
+go run test/curl/curl_client.go
+```
+
+This will:
+1. Convert several curl commands to HTTP interfaces
+2. Create an MCP Server using the converted interfaces
+3. Compile and activate the MCP Server
+4. Invoke a tool from the MCP Server
+
 ## API Documentation
 
 ### HTTP Interfaces
@@ -70,6 +83,7 @@ This will:
 - `GET /api/http-interfaces/:id/versions`: Get all versions of an HTTP interface
 - `GET /api/http-interfaces/:id/versions/:version`: Get a specific version of an HTTP interface
 - `GET /api/http-interfaces/:id/openapi`: Get OpenAPI specification for an HTTP interface
+- `POST /api/http-interfaces/from-curl`: Create a new HTTP interface from a curl command
 
 ### MCP Servers
 
@@ -83,6 +97,20 @@ This will:
 - `POST /api/mcp-servers/:id/compile`: Compile an MCP Server to WebAssembly
 - `POST /api/mcp-servers/:id/activate`: Activate an MCP Server
 - `POST /api/mcp-servers/:id/tools/:tool`: Invoke a tool in an MCP Server
+
+## Curl to HTTP Interface Conversion
+
+The system supports converting curl commands to HTTP interfaces. Simply send a POST request to `/api/http-interfaces/from-curl` with the following JSON body:
+
+```json
+{
+  "command": "curl -H \"Content-Type: application/json\" https://api.example.com/resource",
+  "name": "example-api",
+  "description": "Example API endpoint"
+}
+```
+
+The system will parse the curl command and create a properly formatted HTTP interface that can be used to create MCP Servers.
 
 ## License
 

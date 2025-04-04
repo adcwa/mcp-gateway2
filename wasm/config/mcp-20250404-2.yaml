@@ -1,12 +1,52 @@
 server:
     allowTools:
-        - get-user
-    name: random-user-server
+        - github-api
+        - post-example
+        - weather-api
+        - github-api
+        - post-example
+        - weather-api
+    name: curl-examples-server
 tools:
-    - description: Get random user information
-      name: get-user
+    - description: GitHub API to fetch user information
+      name: github-api
       requestTemplate:
         method: GET
-        url: https://randomuser.me/api/
+        url: https://api.github.com/users/octocat
+      responseTemplate:
+        body: ""
+    - description: Example POST request with JSON data
+      name: post-example
+      requestTemplate:
+        method: POST
+        url: https://example.com/api/users
+      responseTemplate:
+        body: ""
+    - description: Weather API request with query parameters
+      name: weather-api
+      requestTemplate:
+        method: GET
+        url: https://api.openweathermap.org/data/2.5/weather?q=London&appid=YOUR_API_KEY
+      responseTemplate:
+        body: ""
+    - description: GitHub API to fetch user information
+      name: github-api
+      requestTemplate:
+        method: GET
+        url: https://api.github.com/users/octocat
+      responseTemplate:
+        body: ""
+    - description: Example POST request with JSON data
+      name: post-example
+      requestTemplate:
+        method: POST
+        url: https://example.com/api/users
+      responseTemplate:
+        body: ""
+    - description: Weather API request with query parameters
+      name: weather-api
+      requestTemplate:
+        method: GET
+        url: https://api.openweathermap.org/data/2.5/weather?q=London&appid=YOUR_API_KEY
       responseTemplate:
         body: ""

@@ -1,0 +1,12 @@
+server:
+    allowTools:
+        - get-user
+    name: random-user-server
+tools:
+    - description: Get random user information
+      name: get-user
+      requestTemplate:
+        method: GET
+        url: https://randomuser.me/api/
+      responseTemplate:
+        body: ""
