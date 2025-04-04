@@ -81,6 +81,16 @@ func main() {
 	// Pre-add some example HTTP interfaces for testing
 	addExampleHTTPInterfaces(ctx, httpRepo)
 
+	// Add debug routes
+	router.GET("/debug/routes", func(c *gin.Context) {
+		routes := router.Routes()
+		var routesList []string
+		for _, route := range routes {
+			routesList = append(routesList, fmt.Sprintf("%s %s", route.Method, route.Path))
+		}
+		c.JSON(http.StatusOK, routesList)
+	})
+
 	// Determine port to listen on
 	port := os.Getenv("PORT")
 	if port == "" {

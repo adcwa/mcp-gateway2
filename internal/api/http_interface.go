@@ -34,8 +34,9 @@ func (h *HTTPInterfaceHandler) RegisterRoutes(router *gin.Engine) {
 		httpGroup.DELETE("/:id", h.DeleteHTTPInterface)
 		httpGroup.GET("/:id/versions", h.GetHTTPInterfaceVersions)
 		httpGroup.GET("/:id/versions/:version", h.GetHTTPInterfaceByVersion)
-		httpGroup.GET("/:id/openapi", h.GetOpenAPI)
+		httpGroup.GET("/:id/openapi", h.ExportToOpenAPI)
 		httpGroup.POST("/from-curl", h.CreateFromCurl)
+		httpGroup.POST("/from-openapi", h.CreateFromOpenAPI)
 	}
 }
 
@@ -160,23 +161,6 @@ func (h *HTTPInterfaceHandler) GetHTTPInterfaceByVersion(c *gin.Context) {
 	c.JSON(http.StatusOK, httpInterface)
 }
 
-// GetOpenAPI returns the OpenAPI specification for an HTTP interface
-func (h *HTTPInterfaceHandler) GetOpenAPI(c *gin.Context) {
-	id := c.Param("id")
-	httpInterface, err := h.repo.GetByID(c.Request.Context(), id)
-	if err != nil {
-		if err == repository.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "HTTP interface not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	openAPI := httpInterface.ConvertToOpenAPI()
-	c.JSON(http.StatusOK, openAPI)
-}
-
 // CurlCommand represents a curl command to be converted to an HTTP interface
 type CurlCommand struct {
 	Command     string `json:"command" binding:"required"`
@@ -292,4 +276,64 @@ func parseCurlCommand(curlCmd, name, description string) (*models.HTTPInterface,
 	}
 
 	return httpInterface, nil
+}
+
+// OpenAPIImport represents an OpenAPI spec to be converted to HTTP interfaces
+type OpenAPIImport struct {
+	Name        string                 `json:"name" binding:"required"`
+	Description string                 `json:"description"`
+	Spec        map[string]interface{} `json:"spec" binding:"required"`
+}
+
+// CreateFromOpenAPI creates new HTTP interfaces from an OpenAPI specification
+func (h *HTTPInterfaceHandler) CreateFromOpenAPI(c *gin.Context) {
+	var importReq OpenAPIImport
+	if err := c.ShouldBindJSON(&importReq); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Convert OpenAPI to HTTP interfaces
+	interfaces, err := models.CreateFromOpenAPI(importReq.Name, importReq.Description, importReq.Spec)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse OpenAPI spec: " + err.Error()})
+		return
+	}
+
+	// Save each interface
+	savedInterfaces := []models.HTTPInterface{}
+	for _, httpInterface := range interfaces {
+		if err := h.repo.Create(c.Request.Context(), &httpInterface); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save interfaces: " + err.Error()})
+			return
+		}
+		savedInterfaces = append(savedInterfaces, httpInterface)
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":    fmt.Sprintf("Successfully created %d HTTP interfaces from OpenAPI spec", len(savedInterfaces)),
+		"interfaces": savedInterfaces,
+	})
+}
+
+// ExportToOpenAPI exports an HTTP interface to OpenAPI format
+func (h *HTTPInterfaceHandler) ExportToOpenAPI(c *gin.Context) {
+	id := c.Param("id")
+	fmt.Printf("Exporting OpenAPI for interface with ID: %s\n", id)
+
+	httpInterface, err := h.repo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		fmt.Printf("Error getting HTTP interface: %v\n", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("HTTP interface not found: %s", err.Error())})
+		return
+	}
+
+	fmt.Printf("HTTP interface found: %+v\n", httpInterface)
+	fmt.Printf("Converting to OpenAPI...\n")
+
+	openAPISpec := httpInterface.ConvertToOpenAPI()
+	fmt.Printf("OpenAPI conversion result: %+v\n", openAPISpec)
+
+	c.JSON(http.StatusOK, openAPISpec)
+	fmt.Printf("Response sent to client\n")
 }

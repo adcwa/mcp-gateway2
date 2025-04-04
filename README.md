@@ -6,6 +6,7 @@ MCP-Gateway is a service that provides MCP Server unified management capabilitie
 
 - HTTP interface management: Support for exporting OpenAPI structures, converting HTTP to MCP Server YAML format, and versioning of interfaces.
   - Convert curl commands to HTTP interfaces: Easily transform curl commands into properly formatted HTTP interfaces.
+  - Import/Export OpenAPI: Convert between HTTP interfaces and OpenAPI specifications for easy integration with existing API frameworks.
 - MCP Server management: Support for managing MCP Server metadata, selecting multiple HTTP structures to update metadata, publishing MCP Servers (compiling to WebAssembly for dynamic loading), and version control.
 - Routing management: Support for route configuration, such as matching `xxx/mcp-server/{name}` to MCP Server with name `{name}`.
 
@@ -71,6 +72,17 @@ This will:
 3. Compile and activate the MCP Server
 4. Invoke a tool from the MCP Server
 
+To test the OpenAPI conversion feature, run the OpenAPI test client:
+
+```
+go run test/openapi/openapi_client.go
+```
+
+This will:
+1. Export an existing HTTP interface to OpenAPI format
+2. Import a sample OpenAPI specification to create new HTTP interfaces
+3. Perform a round-trip conversion (export to OpenAPI and import back)
+
 ## API Documentation
 
 ### HTTP Interfaces
@@ -82,8 +94,9 @@ This will:
 - `DELETE /api/http-interfaces/:id`: Delete an HTTP interface
 - `GET /api/http-interfaces/:id/versions`: Get all versions of an HTTP interface
 - `GET /api/http-interfaces/:id/versions/:version`: Get a specific version of an HTTP interface
-- `GET /api/http-interfaces/:id/openapi`: Get OpenAPI specification for an HTTP interface
+- `GET /api/http-interfaces/:id/openapi`: Export an HTTP interface to OpenAPI format
 - `POST /api/http-interfaces/from-curl`: Create a new HTTP interface from a curl command
+- `POST /api/http-interfaces/from-openapi`: Create new HTTP interfaces from an OpenAPI specification
 
 ### MCP Servers
 
@@ -111,6 +124,47 @@ The system supports converting curl commands to HTTP interfaces. Simply send a P
 ```
 
 The system will parse the curl command and create a properly formatted HTTP interface that can be used to create MCP Servers.
+
+## OpenAPI Conversion
+
+### Export to OpenAPI
+
+You can export any HTTP interface to OpenAPI format by sending a GET request to `/api/http-interfaces/:id/openapi`. The response will be a properly formatted OpenAPI 3.0.0 specification that can be used with other OpenAPI tools.
+
+### Import from OpenAPI
+
+You can create new HTTP interfaces from an OpenAPI specification by sending a POST request to `/api/http-interfaces/from-openapi` with the following JSON body:
+```shell
+ go run test/openapi/openapi_client.go
+```
+```json
+{
+  "name": "my-api",
+  "description": "My API description",
+  "spec": {
+    "openapi": "3.0.0",
+    "info": {
+      "title": "Sample API",
+      "description": "A sample API",
+      "version": "1.0.0"
+    },
+    "paths": {
+      "/users": {
+        "get": {
+          "summary": "Get all users",
+          "responses": {
+            "200": {
+              "description": "A list of users"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The system will parse the OpenAPI specification and create HTTP interfaces for each path/operation combination.
 
 ## License
 
