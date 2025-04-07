@@ -1,48 +1,32 @@
 {
   "info": {
-    "description": "Get weather information for a location",
-    "title": "get-weather",
+    "description": "Get random user information",
+    "title": "get-user",
     "version": "1.0.0"
   },
   "openapi": "3.0.0",
   "paths": {
-    "https://api.openweathermap.org/data/2.5/weather": {
+    "https://randomuser.me/api/": {
       "get": {
-        "description": "Get weather information for a location",
-        "operationId": "get-weather",
-        "parameters": [
-          {
-            "description": "City name",
-            "in": "query",
-            "name": "q",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "API key",
-            "in": "query",
-            "name": "appid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
+        "description": "Get random user information",
+        "operationId": "get-user",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "example": {
-                  "main": {
-                    "humidity": 75,
-                    "temp": 293.15
-                  },
-                  "weather": [
+                  "results": [
                     {
-                      "description": "clear sky",
-                      "main": "Clear"
+                      "email": "john.doe@example.com",
+                      "location": {
+                        "city": "New York",
+                        "country": "USA"
+                      },
+                      "name": {
+                        "first": "John",
+                        "last": "Doe"
+                      },
+                      "phone": "123-456-7890"
                     }
                   ]
                 },
@@ -51,10 +35,10 @@
                 }
               }
             },
-            "description": "Weather information"
+            "description": "Random user information"
           }
         },
-        "summary": "Get weather information for a location"
+        "summary": "Get random user information"
       }
     }
   }

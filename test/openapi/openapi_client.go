@@ -23,7 +23,7 @@ func main() {
 	// Test 1: Export an existing HTTP interface to OpenAPI
 	fmt.Println("\n=== Test 1: Export HTTP Interface to OpenAPI ===")
 	// Use a fixed ID for testing
-	interfaceID := "http-20250404-2"
+	interfaceID := "http-67279734-e5ff-492b-9918-6067668f893d"
 	fmt.Printf("Using interface ID: %s\n", interfaceID)
 
 	// Export to OpenAPI
