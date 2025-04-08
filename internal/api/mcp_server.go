@@ -40,6 +40,7 @@ func (h *MCPServerHandler) RegisterRoutes(router *gin.Engine) {
 		mcpGroup.POST("/:id/compile", h.CompileMCPServer)
 		mcpGroup.POST("/:id/activate", h.ActivateMCPServer)
 		mcpGroup.POST("/:id/tools/:tool", h.InvokeTool)
+		mcpGroup.GET("/:id/http-interfaces", h.GetMCPServerHTTPInterfaces)
 	}
 }
 
@@ -306,4 +307,40 @@ func (h *MCPServerHandler) InvokeTool(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"result": result})
+}
+
+// GetMCPServerHTTPInterfaces returns the HTTP interfaces used to create a specific MCP server
+func (h *MCPServerHandler) GetMCPServerHTTPInterfaces(c *gin.Context) {
+	id := c.Param("id")
+	server, err := h.mcpRepo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "MCP Server not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get all HTTP interfaces
+	allInterfaces, err := h.httpRepo.GetAll(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Filter interfaces that match the tools in the MCP server
+	var matchedInterfaces []models.HTTPInterface
+	for _, httpInterface := range allInterfaces {
+		for _, tool := range server.Tools {
+			if tool.Name == httpInterface.Name &&
+				tool.RequestTemplate.Method == httpInterface.Method &&
+				tool.RequestTemplate.URL == httpInterface.Path {
+				matchedInterfaces = append(matchedInterfaces, httpInterface)
+				break
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, matchedInterfaces)
 }

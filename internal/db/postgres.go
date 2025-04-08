@@ -24,7 +24,7 @@ func DefaultConfig() Config {
 		Port:     "5432",
 		User:     "admin",
 		Password: "Admin123",
-		Database: "mcp-gateway2",
+		Database: "mcp-gateway",
 	}
 }
 

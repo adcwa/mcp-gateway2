@@ -1,0 +1,20 @@
+server:
+    allowTools:
+        - get-user
+        - get-weather
+    name: dadada
+tools:
+    - description: Get random user information
+      name: get-user
+      requestTemplate:
+        method: GET
+        url: https://randomuser.me/api/
+      responseTemplate:
+        body: ""
+    - description: Get weather information for a location
+      name: get-weather
+      requestTemplate:
+        method: GET
+        url: https://api.openweathermap.org/data/2.5/weather
+      responseTemplate:
+        body: ""
