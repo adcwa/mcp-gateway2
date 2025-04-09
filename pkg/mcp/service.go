@@ -238,3 +238,8 @@ func (s *MCPService) executeToolRequest(ctx context.Context, serverID, toolName 
 func (s *MCPService) Close(ctx context.Context) error {
 	return s.wasmRT.Close(ctx)
 }
+
+// GetWasmDir returns the directory where WASM files are stored
+func (s *MCPService) GetWasmDir() string {
+	return s.wasmDir
+}

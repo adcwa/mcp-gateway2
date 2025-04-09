@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/wangfeng/mcp-gateway2/internal/repository"
 	"github.com/wangfeng/mcp-gateway2/pkg/models"
+	"gopkg.in/yaml.v3"
 )
 
 // HTTPInterfaceHandler handles API requests for HTTP interfaces
@@ -37,6 +40,7 @@ func (h *HTTPInterfaceHandler) RegisterRoutes(router *gin.Engine) {
 		httpGroup.GET("/:id/openapi", h.ExportToOpenAPI)
 		httpGroup.POST("/from-curl", h.CreateFromCurl)
 		httpGroup.POST("/from-openapi", h.CreateFromOpenAPI)
+		httpGroup.POST("/from-openapi-file", h.CreateFromOpenAPIFile)
 	}
 }
 
@@ -280,7 +284,7 @@ func parseCurlCommand(curlCmd, name, description string) (*models.HTTPInterface,
 
 // OpenAPIImport represents an OpenAPI spec to be converted to HTTP interfaces
 type OpenAPIImport struct {
-	Name        string                 `json:"name" binding:"required"`
+	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	Spec        map[string]interface{} `json:"spec" binding:"required"`
 }
@@ -293,8 +297,30 @@ func (h *HTTPInterfaceHandler) CreateFromOpenAPI(c *gin.Context) {
 		return
 	}
 
+	// Set default name if empty
+	name := importReq.Name
+	if name == "" {
+		name = "api"
+		// Try to get title from OpenAPI info
+		if info, ok := importReq.Spec["info"].(map[string]interface{}); ok {
+			if title, ok := info["title"].(string); ok && title != "" {
+				name = title
+			}
+		}
+	}
+
+	// 尝试从OpenAPI info部分获取description，如果没有提供的话
+	description := importReq.Description
+	if description == "" {
+		if info, ok := importReq.Spec["info"].(map[string]interface{}); ok {
+			if desc, ok := info["description"].(string); ok {
+				description = desc
+			}
+		}
+	}
+
 	// Convert OpenAPI to HTTP interfaces
-	interfaces, err := models.CreateFromOpenAPI(importReq.Name, importReq.Description, importReq.Spec)
+	interfaces, err := models.CreateFromOpenAPI(name, description, importReq.Spec)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse OpenAPI spec: " + err.Error()})
 		return
@@ -336,4 +362,97 @@ func (h *HTTPInterfaceHandler) ExportToOpenAPI(c *gin.Context) {
 
 	c.JSON(http.StatusOK, openAPISpec)
 	fmt.Printf("Response sent to client\n")
+}
+
+// CreateFromOpenAPIFile handles OpenAPI file uploads and creates HTTP interfaces
+func (h *HTTPInterfaceHandler) CreateFromOpenAPIFile(c *gin.Context) {
+	// Get the uploaded file
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded: " + err.Error()})
+		return
+	}
+
+	// Open the file
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open uploaded file: " + err.Error()})
+		return
+	}
+	defer src.Close()
+
+	// Read file content
+	fileBytes, err := io.ReadAll(src)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file: " + err.Error()})
+		return
+	}
+
+	// Check file extension to determine format
+	var openAPISpec map[string]interface{}
+
+	fileName := strings.ToLower(file.Filename)
+	isYAML := strings.HasSuffix(fileName, ".yaml") || strings.HasSuffix(fileName, ".yml")
+
+	if isYAML {
+		// Parse YAML
+		var yamlData interface{}
+		if err := yaml.Unmarshal(fileBytes, &yamlData); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid YAML: " + err.Error()})
+			return
+		}
+
+		// Convert YAML to JSON format
+		jsonBytes, err := json.Marshal(yamlData)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to convert YAML to JSON: " + err.Error()})
+			return
+		}
+
+		if err := json.Unmarshal(jsonBytes, &openAPISpec); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid OpenAPI format: " + err.Error()})
+			return
+		}
+	} else {
+		// Parse JSON directly
+		if err := json.Unmarshal(fileBytes, &openAPISpec); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON: " + err.Error()})
+			return
+		}
+	}
+
+	// Get default name from info section or use "api" as fallback
+	name := "api"
+	description := ""
+
+	if info, ok := openAPISpec["info"].(map[string]interface{}); ok {
+		if title, ok := info["title"].(string); ok && title != "" {
+			name = title
+		}
+		if desc, ok := info["description"].(string); ok {
+			description = desc
+		}
+	}
+
+	// Convert OpenAPI to HTTP interfaces
+	interfaces, err := models.CreateFromOpenAPI(name, description, openAPISpec)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse OpenAPI spec: " + err.Error()})
+		return
+	}
+
+	// Save each interface
+	savedInterfaces := []models.HTTPInterface{}
+	for _, httpInterface := range interfaces {
+		if err := h.repo.Create(c.Request.Context(), &httpInterface); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save interfaces: " + err.Error()})
+			return
+		}
+		savedInterfaces = append(savedInterfaces, httpInterface)
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":    fmt.Sprintf("Successfully created %d HTTP interfaces from OpenAPI file", len(savedInterfaces)),
+		"interfaces": savedInterfaces,
+	})
 }

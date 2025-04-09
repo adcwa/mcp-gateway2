@@ -86,6 +86,7 @@ func main() {
 	// Initialize API handlers
 	httpHandler := api.NewHTTPInterfaceHandler(httpRepo)
 	mcpHandler := api.NewMCPServerHandler(mcpRepo, httpRepo, mcpService)
+	// wasmHandler := api.NewWasmFileHandler(mcpRepo, mcpService)
 
 	// Set up Gin router
 	router := gin.Default()
@@ -108,6 +109,7 @@ func main() {
 	// Register API routes
 	httpHandler.RegisterRoutes(router)
 	mcpHandler.RegisterRoutes(router)
+	// wasmHandler.RegisterRoutes(router)
 
 	// Create a basic index page
 	router.GET("/", func(c *gin.Context) {

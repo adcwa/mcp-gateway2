@@ -223,9 +223,18 @@ func CreateFromOpenAPI(name string, description string, openAPI map[string]inter
 				continue
 			}
 
+			// Default interface name based on method and path if name is empty
+			interfaceName := ""
+			if name == "" {
+				// Use path as name
+				interfaceName = strings.ToLower(method) + "-" + sanitizePath(path)
+			} else {
+				interfaceName = name + "-" + strings.ToLower(method) + "-" + sanitizePath(path)
+			}
+
 			// Create the HTTP interface
 			httpInterface := HTTPInterface{
-				Name:        name + "-" + strings.ToLower(method) + "-" + sanitizePath(path),
+				Name:        interfaceName,
 				Description: description,
 				Method:      strings.ToUpper(method),
 				Path:        path,
@@ -237,6 +246,13 @@ func CreateFromOpenAPI(name string, description string, openAPI map[string]inter
 			// Extract operation ID if present
 			if opID, ok := operation["operationId"].(string); ok && opID != "" {
 				httpInterface.Name = opID
+			}
+
+			// Extract summary or description if present
+			if summary, ok := operation["summary"].(string); ok && summary != "" {
+				httpInterface.Description = summary
+			} else if opDesc, ok := operation["description"].(string); ok && opDesc != "" && httpInterface.Description == "" {
+				httpInterface.Description = opDesc
 			}
 
 			// Extract parameters

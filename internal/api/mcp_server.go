@@ -3,6 +3,8 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/wangfeng/mcp-gateway2/internal/repository"
@@ -41,6 +43,8 @@ func (h *MCPServerHandler) RegisterRoutes(router *gin.Engine) {
 		mcpGroup.POST("/:id/activate", h.ActivateMCPServer)
 		mcpGroup.POST("/:id/tools/:tool", h.InvokeTool)
 		mcpGroup.GET("/:id/http-interfaces", h.GetMCPServerHTTPInterfaces)
+		mcpGroup.GET("/:id/wasm-files", h.GetWasmFiles)
+		mcpGroup.POST("/:id/upload-wasm", h.UploadWasmFile)
 	}
 }
 
@@ -343,4 +347,96 @@ func (h *MCPServerHandler) GetMCPServerHTTPInterfaces(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, matchedInterfaces)
+}
+
+// GetWasmFiles retrieves all WASM files associated with an MCP Server
+func (h *MCPServerHandler) GetWasmFiles(c *gin.Context) {
+	id := c.Param("id")
+
+	// Verify the MCP server exists
+	server, err := h.mcpRepo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "MCP Server not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Here you would normally fetch WASM files from your storage system
+	// For now, let's return a simple response with the current WASM path
+	wasmFiles := []gin.H{}
+
+	if server.WasmPath != "" {
+		// Extract filename from path
+		filename := server.WasmPath
+		if lastSlash := strings.LastIndex(server.WasmPath, "/"); lastSlash >= 0 {
+			filename = server.WasmPath[lastSlash+1:]
+		}
+
+		wasmFiles = append(wasmFiles, gin.H{
+			"id":        id + "-wasm",
+			"name":      filename,
+			"path":      server.WasmPath,
+			"size":      0, // You would get the actual file size
+			"createdAt": server.CreatedAt,
+			"updatedAt": server.UpdatedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, wasmFiles)
+}
+
+// UploadWasmFile handles uploading a WASM file for an MCP server
+func (h *MCPServerHandler) UploadWasmFile(c *gin.Context) {
+	id := c.Param("id")
+
+	// Verify the MCP server exists
+	_, err := h.mcpRepo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "MCP Server not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get the file from the request
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file provided or invalid file"})
+		return
+	}
+
+	// Check file type (optional)
+	if !strings.HasSuffix(strings.ToLower(file.Filename), ".wasm") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File must be a .wasm file"})
+		return
+	}
+
+	// Generate a unique filename
+	filename := fmt.Sprintf("%s-%s", id, file.Filename)
+	wasmPath := filepath.Join(h.mcpService.GetWasmDir(), filename)
+
+	// Save the file
+	if err := c.SaveUploadedFile(file, wasmPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file: " + err.Error()})
+		return
+	}
+
+	// Update the MCP server's WASM path
+	if err := h.mcpRepo.UpdateWasmPath(c.Request.Context(), id, wasmPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update WASM path: " + err.Error()})
+		return
+	}
+
+	// Return success
+	c.JSON(http.StatusOK, gin.H{
+		"id":   id + "-wasm",
+		"name": file.Filename,
+		"path": wasmPath,
+		"size": file.Size,
+	})
 }

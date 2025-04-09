@@ -1,0 +1,12 @@
+server:
+    allowTools:
+        - custPartNumApplyForm-find
+    name: b
+tools:
+    - description: custPartNumApplyFormfind
+      name: custPartNumApplyForm-find
+      requestTemplate:
+        method: GET
+        url: https://vrdos-bom-ontest.inner.chj.cloud/custPartNumApplyForm/find?_dc=1744187346431
+      responseTemplate:
+        body: ""
