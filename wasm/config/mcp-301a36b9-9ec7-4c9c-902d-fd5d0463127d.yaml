@@ -1,0 +1,12 @@
+server:
+    allowTools:
+        - get-weather
+    name: b
+tools:
+    - description: Get weather information for a location
+      name: get-weather
+      requestTemplate:
+        method: GET
+        url: https://api.openweathermap.org/data/2.5/weather
+      responseTemplate:
+        body: ""

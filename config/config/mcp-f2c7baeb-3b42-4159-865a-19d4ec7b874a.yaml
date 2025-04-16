@@ -1,0 +1,20 @@
+server:
+    allowTools:
+        - get-weather
+        - get-user-operationId 阿萨德
+    name: ddd
+tools:
+    - description: Get weather information for a location
+      name: get-weather
+      requestTemplate:
+        method: GET
+        url: https://api.openweathermap.org/data/2.5/weather
+      responseTemplate:
+        body: ""
+    - description: Get random user information-summary
+      name: get-user-operationId 阿萨德
+      requestTemplate:
+        method: GET
+        url: https://randomuser.me/api/
+      responseTemplate:
+        body: ""

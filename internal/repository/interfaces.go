@@ -27,7 +27,6 @@ type MCPServerRepository interface {
 	GetVersions(ctx context.Context, id string) ([]int, error)
 	GetByVersion(ctx context.Context, id string, version int) (*models.MCPServer, error)
 	UpdateStatus(ctx context.Context, id string, status string) error
-	UpdateWasmPath(ctx context.Context, id string, wasmPath string) error
 }
 
 // RouterRepository defines the interface for Router operations

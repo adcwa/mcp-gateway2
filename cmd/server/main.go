@@ -20,7 +20,7 @@ import (
 
 const (
 	defaultPort = "8080"
-	wasmDir     = "./wasm"
+	configDir   = "./config"
 )
 
 func main() {
@@ -28,9 +28,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create the wasm directory if it doesn't exist
-	if err := os.MkdirAll(wasmDir, 0755); err != nil {
-		log.Fatalf("Failed to create wasm directory: %v", err)
+	// Create the config directory if it doesn't exist
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		log.Fatalf("Failed to create config directory: %v", err)
 	}
 
 	// Initialize database connection
@@ -77,11 +77,10 @@ func main() {
 	}
 
 	// Initialize MCP service
-	mcpService, err := mcp.NewMCPService(wasmDir)
+	mcpService, err := mcp.NewMCPService(configDir)
 	if err != nil {
 		log.Fatalf("Failed to initialize MCP service: %v", err)
 	}
-	defer mcpService.Close(ctx)
 
 	// Initialize API handlers
 	httpHandler := api.NewHTTPInterfaceHandler(httpRepo)

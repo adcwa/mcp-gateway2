@@ -1,0 +1,12 @@
+server:
+    allowTools:
+        - get-weather
+    name: Weather Service
+tools:
+    - description: Get weather alerts for a US state
+      name: get-weather
+      requestTemplate:
+        method: GET
+        url: https://api.weather.gov/alerts/active?area={state}
+      responseTemplate:
+        body: ""

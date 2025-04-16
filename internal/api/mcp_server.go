@@ -1,10 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
-	"strings"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/wangfeng/mcp-gateway2/internal/repository"
@@ -12,14 +12,14 @@ import (
 	"github.com/wangfeng/mcp-gateway2/pkg/models"
 )
 
-// MCPServerHandler handles API requests for MCP Servers
+// MCPServerHandler handles HTTP requests for MCP servers
 type MCPServerHandler struct {
 	mcpRepo    repository.MCPServerRepository
 	httpRepo   repository.HTTPInterfaceRepository
 	mcpService *mcp.MCPService
 }
 
-// NewMCPServerHandler creates a new MCP Server handler
+// NewMCPServerHandler creates a new MCP server handler
 func NewMCPServerHandler(mcpRepo repository.MCPServerRepository, httpRepo repository.HTTPInterfaceRepository, mcpService *mcp.MCPService) *MCPServerHandler {
 	return &MCPServerHandler{
 		mcpRepo:    mcpRepo,
@@ -28,27 +28,23 @@ func NewMCPServerHandler(mcpRepo repository.MCPServerRepository, httpRepo reposi
 	}
 }
 
-// RegisterRoutes registers the MCP Server API routes
+// RegisterRoutes registers the routes for MCP servers
 func (h *MCPServerHandler) RegisterRoutes(router *gin.Engine) {
 	mcpGroup := router.Group("/api/mcp-servers")
-	{
-		mcpGroup.GET("", h.GetAllMCPServers)
-		mcpGroup.GET("/:id", h.GetMCPServer)
-		mcpGroup.POST("", h.CreateMCPServer)
-		mcpGroup.PUT("/:id", h.UpdateMCPServer)
-		mcpGroup.DELETE("/:id", h.DeleteMCPServer)
-		mcpGroup.GET("/:id/versions", h.GetMCPServerVersions)
-		mcpGroup.GET("/:id/versions/:version", h.GetMCPServerByVersion)
-		mcpGroup.POST("/:id/compile", h.CompileMCPServer)
-		mcpGroup.POST("/:id/activate", h.ActivateMCPServer)
-		mcpGroup.POST("/:id/tools/:tool", h.InvokeTool)
-		mcpGroup.GET("/:id/http-interfaces", h.GetMCPServerHTTPInterfaces)
-		mcpGroup.GET("/:id/wasm-files", h.GetWasmFiles)
-		mcpGroup.POST("/:id/upload-wasm", h.UploadWasmFile)
-	}
+	mcpGroup.GET("", h.GetAllMCPServers)
+	mcpGroup.GET("/:id", h.GetMCPServer)
+	mcpGroup.POST("", h.CreateMCPServer)
+	mcpGroup.PUT("/:id", h.UpdateMCPServer)
+	mcpGroup.DELETE("/:id", h.DeleteMCPServer)
+	mcpGroup.GET("/:id/versions", h.GetMCPServerVersions)
+	mcpGroup.GET("/:id/versions/:version", h.GetMCPServerByVersion)
+	mcpGroup.POST("/:id/register", h.RegisterMCPServer)
+	mcpGroup.POST("/:id/activate", h.ActivateMCPServer)
+	mcpGroup.POST("/:id/tools/:tool", h.InvokeTool)
+	mcpGroup.GET("/:id/http-interfaces", h.GetMCPServerHTTPInterfaces)
 }
 
-// GetAllMCPServers returns all MCP Servers
+// GetAllMCPServers returns all MCP servers
 func (h *MCPServerHandler) GetAllMCPServers(c *gin.Context) {
 	servers, err := h.mcpRepo.GetAll(c.Request.Context())
 	if err != nil {
@@ -59,7 +55,7 @@ func (h *MCPServerHandler) GetAllMCPServers(c *gin.Context) {
 	c.JSON(http.StatusOK, servers)
 }
 
-// GetMCPServer returns a specific MCP Server
+// GetMCPServer returns a single MCP server
 func (h *MCPServerHandler) GetMCPServer(c *gin.Context) {
 	id := c.Param("id")
 	server, err := h.mcpRepo.GetByID(c.Request.Context(), id)
@@ -75,13 +71,14 @@ func (h *MCPServerHandler) GetMCPServer(c *gin.Context) {
 	c.JSON(http.StatusOK, server)
 }
 
-// CreateMCPServer creates a new MCP Server from HTTP interfaces
+// CreateMCPServerRequest is the request for creating a new MCP Server
 type CreateMCPServerRequest struct {
 	Name        string   `json:"name" binding:"required"`
 	Description string   `json:"description"`
 	HTTPIDs     []string `json:"httpIds" binding:"required"`
 }
 
+// CreateMCPServer creates a new MCP Server from HTTP interfaces
 func (h *MCPServerHandler) CreateMCPServer(c *gin.Context) {
 	var req CreateMCPServerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -175,17 +172,17 @@ func (h *MCPServerHandler) GetMCPServerVersions(c *gin.Context) {
 // GetMCPServerByVersion returns a specific version of an MCP Server
 func (h *MCPServerHandler) GetMCPServerByVersion(c *gin.Context) {
 	id := c.Param("id")
-	version := c.Param("version")
-	versionInt := 0
-	if _, err := fmt.Sscanf(version, "%d", &versionInt); err != nil {
+	versionStr := c.Param("version")
+	version, err := strconv.Atoi(versionStr)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid version number"})
 		return
 	}
 
-	server, err := h.mcpRepo.GetByVersion(c.Request.Context(), id, versionInt)
+	server, err := h.mcpRepo.GetByVersion(c.Request.Context(), id, version)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "MCP Server version not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "MCP Server or version not found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -195,8 +192,8 @@ func (h *MCPServerHandler) GetMCPServerByVersion(c *gin.Context) {
 	c.JSON(http.StatusOK, server)
 }
 
-// CompileMCPServer compiles an MCP Server to WebAssembly
-func (h *MCPServerHandler) CompileMCPServer(c *gin.Context) {
+// RegisterMCPServer registers an MCP Server with the service
+func (h *MCPServerHandler) RegisterMCPServer(c *gin.Context) {
 	id := c.Param("id")
 
 	// Get MCP Server
@@ -210,20 +207,13 @@ func (h *MCPServerHandler) CompileMCPServer(c *gin.Context) {
 		return
 	}
 
-	// Compile to WebAssembly
-	wasmPath, err := h.mcpService.CompileToWasm(server)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to compile MCP Server: " + err.Error()})
+	// Register with the MCP service
+	if err := h.mcpService.RegisterServer(server); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register MCP Server: " + err.Error()})
 		return
 	}
 
-	// Update WASM path
-	if err := h.mcpRepo.UpdateWasmPath(c.Request.Context(), id, wasmPath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "MCP Server compiled successfully", "wasmPath": wasmPath})
+	c.JSON(http.StatusOK, gin.H{"message": "MCP Server registered successfully"})
 }
 
 // ActivateMCPServer activates an MCP Server
@@ -241,15 +231,9 @@ func (h *MCPServerHandler) ActivateMCPServer(c *gin.Context) {
 		return
 	}
 
-	// Ensure the server has been compiled
-	if server.WasmPath == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "MCP Server not compiled yet"})
-		return
-	}
-
-	// Load the WASM module
-	if err := h.mcpService.LoadWasmModule(c.Request.Context(), server); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load WASM module: " + err.Error()})
+	// Register with the MCP service if not already registered
+	if err := h.mcpService.RegisterServer(server); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register MCP Server: " + err.Error()})
 		return
 	}
 
@@ -267,19 +251,24 @@ func (h *MCPServerHandler) InvokeTool(c *gin.Context) {
 	id := c.Param("id")
 	toolName := c.Param("tool")
 
+	fmt.Printf("INFO: Processing tool invocation request: server=%s, tool=%s\n", id, toolName)
+
 	// Get MCP Server
 	server, err := h.mcpRepo.GetByID(c.Request.Context(), id)
 	if err != nil {
 		if err == repository.ErrNotFound {
+			fmt.Printf("ERROR: MCP Server not found: id=%s\n", id)
 			c.JSON(http.StatusNotFound, gin.H{"error": "MCP Server not found"})
 			return
 		}
+		fmt.Printf("ERROR: Failed to get MCP server: id=%s, error=%v\n", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Check if the server is active
 	if server.Status != "active" {
+		fmt.Printf("ERROR: MCP Server is not active: id=%s, status=%s\n", id, server.Status)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "MCP Server is not active"})
 		return
 	}
@@ -293,23 +282,53 @@ func (h *MCPServerHandler) InvokeTool(c *gin.Context) {
 		}
 	}
 	if !toolExists {
+		fmt.Printf("ERROR: Tool not found or not allowed: server=%s, tool=%s\n", id, toolName)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Tool not found or not allowed"})
+		return
+	}
+
+	// IMPORTANT: Register the server with the MCP service if it's not already registered
+	// This ensures the server is available in the MCP service's in-memory map
+	fmt.Printf("INFO: Ensuring server is registered with MCP service: id=%s\n", id)
+	err = h.mcpService.RegisterServer(server)
+	if err != nil {
+		fmt.Printf("ERROR: Failed to register server with MCP service: id=%s, error=%v\n", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register server: " + err.Error()})
 		return
 	}
 
 	// Get tool parameters
 	var params map[string]interface{}
 	if err := c.ShouldBindJSON(&params); err != nil {
+		fmt.Printf("WARNING: Could not parse request body, using empty params: error=%v\n", err)
 		params = make(map[string]interface{})
+	} else {
+		fmt.Printf("INFO: Parsed parameters: %v\n", params)
 	}
 
 	// Execute the tool
+	fmt.Printf("INFO: Executing tool request: server=%s, tool=%s\n", id, toolName)
 	result, err := h.mcpService.HandleToolRequest(c.Request.Context(), id, toolName, params)
 	if err != nil {
+		fmt.Printf("ERROR: Failed to execute tool: server=%s, tool=%s, error=%v\n", id, toolName, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to execute tool: " + err.Error()})
 		return
 	}
 
+	fmt.Printf("INFO: Tool executed successfully: server=%s, tool=%s\n", id, toolName)
+
+	// Try to parse result as JSON
+	var jsonResult interface{}
+	if json.Valid([]byte(result)) {
+		if err := json.Unmarshal([]byte(result), &jsonResult); err == nil {
+			fmt.Printf("INFO: Returning JSON result\n")
+			c.JSON(http.StatusOK, jsonResult)
+			return
+		}
+	}
+
+	// If not valid JSON, return as text
+	fmt.Printf("INFO: Returning text result\n")
 	c.JSON(http.StatusOK, gin.H{"result": result})
 }
 
@@ -347,96 +366,4 @@ func (h *MCPServerHandler) GetMCPServerHTTPInterfaces(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, matchedInterfaces)
-}
-
-// GetWasmFiles retrieves all WASM files associated with an MCP Server
-func (h *MCPServerHandler) GetWasmFiles(c *gin.Context) {
-	id := c.Param("id")
-
-	// Verify the MCP server exists
-	server, err := h.mcpRepo.GetByID(c.Request.Context(), id)
-	if err != nil {
-		if err == repository.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "MCP Server not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Here you would normally fetch WASM files from your storage system
-	// For now, let's return a simple response with the current WASM path
-	wasmFiles := []gin.H{}
-
-	if server.WasmPath != "" {
-		// Extract filename from path
-		filename := server.WasmPath
-		if lastSlash := strings.LastIndex(server.WasmPath, "/"); lastSlash >= 0 {
-			filename = server.WasmPath[lastSlash+1:]
-		}
-
-		wasmFiles = append(wasmFiles, gin.H{
-			"id":        id + "-wasm",
-			"name":      filename,
-			"path":      server.WasmPath,
-			"size":      0, // You would get the actual file size
-			"createdAt": server.CreatedAt,
-			"updatedAt": server.UpdatedAt,
-		})
-	}
-
-	c.JSON(http.StatusOK, wasmFiles)
-}
-
-// UploadWasmFile handles uploading a WASM file for an MCP server
-func (h *MCPServerHandler) UploadWasmFile(c *gin.Context) {
-	id := c.Param("id")
-
-	// Verify the MCP server exists
-	_, err := h.mcpRepo.GetByID(c.Request.Context(), id)
-	if err != nil {
-		if err == repository.ErrNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "MCP Server not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Get the file from the request
-	file, err := c.FormFile("file")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No file provided or invalid file"})
-		return
-	}
-
-	// Check file type (optional)
-	if !strings.HasSuffix(strings.ToLower(file.Filename), ".wasm") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File must be a .wasm file"})
-		return
-	}
-
-	// Generate a unique filename
-	filename := fmt.Sprintf("%s-%s", id, file.Filename)
-	wasmPath := filepath.Join(h.mcpService.GetWasmDir(), filename)
-
-	// Save the file
-	if err := c.SaveUploadedFile(file, wasmPath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file: " + err.Error()})
-		return
-	}
-
-	// Update the MCP server's WASM path
-	if err := h.mcpRepo.UpdateWasmPath(c.Request.Context(), id, wasmPath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update WASM path: " + err.Error()})
-		return
-	}
-
-	// Return success
-	c.JSON(http.StatusOK, gin.H{
-		"id":   id + "-wasm",
-		"name": file.Filename,
-		"path": wasmPath,
-		"size": file.Size,
-	})
 }

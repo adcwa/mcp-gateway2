@@ -34,7 +34,6 @@ func (r *PgMCPServerRepository) Initialize(ctx context.Context) error {
 			tools JSONB,
 			allow_tools JSONB,
 			status TEXT NOT NULL,
-			wasm_path TEXT,
 			version INTEGER NOT NULL,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
@@ -46,7 +45,7 @@ func (r *PgMCPServerRepository) Initialize(ctx context.Context) error {
 // GetAll returns all MCP servers
 func (r *PgMCPServerRepository) GetAll(ctx context.Context) ([]models.MCPServer, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, name, description, tools, allow_tools, status, wasm_path, version, created_at, updated_at
+		SELECT id, name, description, tools, allow_tools, status, version, created_at, updated_at
 		FROM mcp_servers
 	`)
 	if err != nil {
@@ -58,7 +57,6 @@ func (r *PgMCPServerRepository) GetAll(ctx context.Context) ([]models.MCPServer,
 	for rows.Next() {
 		var server models.MCPServer
 		var toolsJSON, allowToolsJSON []byte
-		var wasmPathNull sql.NullString
 
 		// Scan rows into variables
 		err := rows.Scan(
@@ -68,18 +66,12 @@ func (r *PgMCPServerRepository) GetAll(ctx context.Context) ([]models.MCPServer,
 			&toolsJSON,
 			&allowToolsJSON,
 			&server.Status,
-			&wasmPathNull,
 			&server.Version,
 			&server.CreatedAt,
 			&server.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
-		}
-
-		// Set optional wasm path
-		if wasmPathNull.Valid {
-			server.WasmPath = wasmPathNull.String
 		}
 
 		// Unmarshal tools
@@ -106,10 +98,9 @@ func (r *PgMCPServerRepository) GetAll(ctx context.Context) ([]models.MCPServer,
 func (r *PgMCPServerRepository) GetByID(ctx context.Context, id string) (*models.MCPServer, error) {
 	var server models.MCPServer
 	var toolsJSON, allowToolsJSON []byte
-	var wasmPathNull sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, name, description, tools, allow_tools, status, wasm_path, version, created_at, updated_at
+		SELECT id, name, description, tools, allow_tools, status, version, created_at, updated_at
 		FROM mcp_servers
 		WHERE id = $1
 	`, id).Scan(
@@ -119,7 +110,6 @@ func (r *PgMCPServerRepository) GetByID(ctx context.Context, id string) (*models
 		&toolsJSON,
 		&allowToolsJSON,
 		&server.Status,
-		&wasmPathNull,
 		&server.Version,
 		&server.CreatedAt,
 		&server.UpdatedAt,
@@ -129,11 +119,6 @@ func (r *PgMCPServerRepository) GetByID(ctx context.Context, id string) (*models
 		return nil, ErrNotFound
 	} else if err != nil {
 		return nil, err
-	}
-
-	// Set optional wasm path
-	if wasmPathNull.Valid {
-		server.WasmPath = wasmPathNull.String
 	}
 
 	// Unmarshal tools
@@ -181,8 +166,8 @@ func (r *PgMCPServerRepository) Create(ctx context.Context, server *models.MCPSe
 	// Insert the MCP server
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO mcp_servers (
-			id, name, description, tools, allow_tools, status, wasm_path, version, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			id, name, description, tools, allow_tools, status, version, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`,
 		server.ID,
 		server.Name,
@@ -190,7 +175,6 @@ func (r *PgMCPServerRepository) Create(ctx context.Context, server *models.MCPSe
 		toolsJSON,
 		allowToolsJSON,
 		server.Status,
-		sql.NullString{String: server.WasmPath, Valid: server.WasmPath != ""},
 		server.Version,
 		server.CreatedAt,
 		server.UpdatedAt,
@@ -201,7 +185,7 @@ func (r *PgMCPServerRepository) Create(ctx context.Context, server *models.MCPSe
 
 // Update updates an existing MCP server
 func (r *PgMCPServerRepository) Update(ctx context.Context, server *models.MCPServer) error {
-	// Retrieve the current version
+	// Get current version
 	var currentVersion int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT version FROM mcp_servers WHERE id = $1
@@ -213,7 +197,7 @@ func (r *PgMCPServerRepository) Update(ctx context.Context, server *models.MCPSe
 		return err
 	}
 
-	// Increment version and update timestamp
+	// Set new version and update timestamp
 	server.Version = currentVersion + 1
 	server.UpdatedAt = time.Now()
 
@@ -229,33 +213,44 @@ func (r *PgMCPServerRepository) Update(ctx context.Context, server *models.MCPSe
 	}
 
 	// Update the MCP server
-	_, err = r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE mcp_servers SET
 			name = $1,
 			description = $2,
 			tools = $3,
 			allow_tools = $4,
 			status = $5,
-			wasm_path = $6,
-			version = $7,
-			updated_at = $8
-		WHERE id = $9
+			version = $6,
+			updated_at = $7
+		WHERE id = $8
 	`,
 		server.Name,
 		server.Description,
 		toolsJSON,
 		allowToolsJSON,
 		server.Status,
-		sql.NullString{String: server.WasmPath, Valid: server.WasmPath != ""},
 		server.Version,
 		server.UpdatedAt,
 		server.ID,
 	)
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+
+	return nil
 }
 
-// Delete deletes an MCP server by ID
+// Delete removes an MCP server
 func (r *PgMCPServerRepository) Delete(ctx context.Context, id string) error {
 	result, err := r.db.ExecContext(ctx, `
 		DELETE FROM mcp_servers WHERE id = $1
@@ -276,15 +271,12 @@ func (r *PgMCPServerRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// GetVersions returns all versions of a specific MCP server
-// Note: In this implementation, we only store the current version
-// so this will just return a single-element array with the current version number
+// GetVersions returns all version numbers for an MCP server
 func (r *PgMCPServerRepository) GetVersions(ctx context.Context, id string) ([]int, error) {
+	// In a real implementation, you'd store past versions
+	// For this simplified version, just return the current version
 	var version int
-	err := r.db.QueryRowContext(ctx, `
-		SELECT version FROM mcp_servers WHERE id = $1
-	`, id).Scan(&version)
-
+	err := r.db.QueryRowContext(ctx, "SELECT version FROM mcp_servers WHERE id = $1", id).Scan(&version)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -294,10 +286,10 @@ func (r *PgMCPServerRepository) GetVersions(ctx context.Context, id string) ([]i
 	return []int{version}, nil
 }
 
-// GetByVersion returns a specific version of an MCP server
-// Note: In this implementation, we only store the current version
-// so this will just return the current server if version matches
+// GetByVersion retrieves a specific version of an MCP server
 func (r *PgMCPServerRepository) GetByVersion(ctx context.Context, id string, version int) (*models.MCPServer, error) {
+	// In a real implementation, you'd retrieve the specific version
+	// For this simplified version, just return the current version if it matches
 	server, err := r.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -318,30 +310,6 @@ func (r *PgMCPServerRepository) UpdateStatus(ctx context.Context, id string, sta
 			updated_at = $2
 		WHERE id = $3
 	`, status, time.Now(), id)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-
-	return nil
-}
-
-// UpdateWasmPath updates the Wasm path of an MCP server
-func (r *PgMCPServerRepository) UpdateWasmPath(ctx context.Context, id string, wasmPath string) error {
-	result, err := r.db.ExecContext(ctx, `
-		UPDATE mcp_servers SET
-			wasm_path = $1,
-			updated_at = $2
-		WHERE id = $3
-	`, sql.NullString{String: wasmPath, Valid: wasmPath != ""}, time.Now(), id)
 	if err != nil {
 		return err
 	}

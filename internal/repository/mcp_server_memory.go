@@ -169,22 +169,6 @@ func (r *InMemoryMCPServerRepository) UpdateStatus(ctx context.Context, id strin
 	return nil
 }
 
-// UpdateWasmPath updates the Wasm path of an MCP server
-func (r *InMemoryMCPServerRepository) UpdateWasmPath(ctx context.Context, id string, wasmPath string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	server, ok := r.servers[id]
-	if !ok {
-		return ErrNotFound
-	}
-
-	server.WasmPath = wasmPath
-	server.UpdatedAt = time.Now()
-
-	return nil
-}
-
 // Helper function to clone an MCP server
 func cloneMCPServer(server *models.MCPServer) *models.MCPServer {
 	clone := *server

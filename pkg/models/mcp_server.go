@@ -13,7 +13,6 @@ type MCPServer struct {
 	Tools       []Tool    `json:"tools"`
 	Version     int       `json:"version"`
 	Status      string    `json:"status" binding:"oneof=draft active inactive"`
-	WasmPath    string    `json:"wasmPath,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
