@@ -325,3 +325,43 @@ func (r *PgMCPServerRepository) UpdateStatus(ctx context.Context, id string, sta
 
 	return nil
 }
+
+// GetByName returns a specific MCP server by name
+func (r *PgMCPServerRepository) GetByName(ctx context.Context, name string) (*models.MCPServer, error) {
+	var server models.MCPServer
+	var toolsJSON, allowToolsJSON []byte
+
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, name, description, tools, allow_tools, status, version, created_at, updated_at
+		FROM mcp_servers
+		WHERE name = $1
+	`, name).Scan(
+		&server.ID,
+		&server.Name,
+		&server.Description,
+		&toolsJSON,
+		&allowToolsJSON,
+		&server.Status,
+		&server.Version,
+		&server.CreatedAt,
+		&server.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+
+	// Unmarshal tools
+	if err := json.Unmarshal(toolsJSON, &server.Tools); err != nil {
+		return nil, err
+	}
+
+	// Unmarshal allow tools
+	if err := json.Unmarshal(allowToolsJSON, &server.AllowTools); err != nil {
+		return nil, err
+	}
+
+	return &server, nil
+}

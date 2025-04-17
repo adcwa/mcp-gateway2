@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "strict": true,
+    "outDir": "./",
+    "sourceMap": true,
+    "lib": ["es2020", "dom"]
+  },
+  "include": ["*.ts"],
+  "exclude": ["node_modules"]
+} 

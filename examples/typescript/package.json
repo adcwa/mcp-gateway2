@@ -1,0 +1,18 @@
+{
+  "name": "mcp-client-example",
+  "version": "1.0.0",
+  "description": "MCP client example for TypeScript",
+  "main": "mcp_client.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node mcp_client.js"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.11.18",
+    "typescript": "^4.9.4"
+  },
+  "type": "module"
+} 

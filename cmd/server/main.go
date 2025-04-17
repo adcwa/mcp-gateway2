@@ -16,6 +16,7 @@ import (
 	"github.com/wangfeng/mcp-gateway2/internal/repository"
 	"github.com/wangfeng/mcp-gateway2/pkg/mcp"
 	"github.com/wangfeng/mcp-gateway2/pkg/models"
+	"github.com/wangfeng/mcp-gateway2/pkg/router"
 )
 
 const (
@@ -87,6 +88,9 @@ func main() {
 	mcpHandler := api.NewMCPServerHandler(mcpRepo, httpRepo, mcpService)
 	// wasmHandler := api.NewWasmFileHandler(mcpRepo, mcpService)
 
+	// Initialize router handler for MCP server dynamic routing
+	mcpRouter := router.NewMCPServerRouter(mcpRepo, mcpService)
+
 	// Set up Gin router
 	router := gin.Default()
 
@@ -109,6 +113,9 @@ func main() {
 	httpHandler.RegisterRoutes(router)
 	mcpHandler.RegisterRoutes(router)
 	// wasmHandler.RegisterRoutes(router)
+
+	// Register MCP server router
+	mcpRouter.RegisterRoutes(router)
 
 	// Create a basic index page
 	router.GET("/", func(c *gin.Context) {

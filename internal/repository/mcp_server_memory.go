@@ -169,6 +169,20 @@ func (r *InMemoryMCPServerRepository) UpdateStatus(ctx context.Context, id strin
 	return nil
 }
 
+// GetByName retrieves an MCP server by name
+func (r *InMemoryMCPServerRepository) GetByName(ctx context.Context, name string) (*models.MCPServer, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, server := range r.servers {
+		if server.Name == name {
+			return cloneMCPServer(server), nil
+		}
+	}
+
+	return nil, ErrNotFound
+}
+
 // Helper function to clone an MCP server
 func cloneMCPServer(server *models.MCPServer) *models.MCPServer {
 	clone := *server

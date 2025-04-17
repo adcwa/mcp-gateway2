@@ -41,3 +41,12 @@ Go语言与Gin框架 作为后端
 vue3+tailwind 作为前端
 
 
+mcp-server 定义激活完成之后，分三步
+1. 提供这个mcp server 元信息接口，提供信息需要完整准确并且严格遵循 mcp 协议规范的接口元素，提供的接口信息通过该项目转发调用，其他AI应用通过获取元信息后，识别可用 tools，prompt 和 resource，提供给大模型
+tools : https://modelcontextprotocol.io/specification/2025-03-26/server/tools
+resources: https://modelcontextprotocol.io/specification/2025-03-26/server/resources
+prompts: https://modelcontextprotocol.io/specification/2025-03-26/server/prompts
+resources 和 prompts 先在元信息中保留
+
+2. 提供一个完整的  mcp-server ，该服务严格遵循 mcp 协议，并提供所有相关接口， mcp-client 只需要通过 mcp-server/{server-name}接口就可以使用这个 server所有功能
+3. 提供 mcp-client 的使用示例，支持 python，ts 语言，java 等常用语言

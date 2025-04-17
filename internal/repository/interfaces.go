@@ -21,6 +21,7 @@ type HTTPInterfaceRepository interface {
 type MCPServerRepository interface {
 	Create(ctx context.Context, mcpServer *models.MCPServer) error
 	GetByID(ctx context.Context, id string) (*models.MCPServer, error)
+	GetByName(ctx context.Context, name string) (*models.MCPServer, error)
 	GetAll(ctx context.Context) ([]models.MCPServer, error)
 	Update(ctx context.Context, mcpServer *models.MCPServer) error
 	Delete(ctx context.Context, id string) error
