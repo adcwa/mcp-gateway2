@@ -1,5 +1,28 @@
 package api
 
+// MCP Server API - Tool Invocation Format
+//
+// When invoking tools via the MCP Server API, parameters should be structured as follows:
+//
+// {
+//     "headers": {
+//         "authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+//         "content-type": "application/json;charset=UTF-8",
+//         "accept": "application/json, text/plain, */*",
+//         "accept-language": "zh_CN",
+//         ... other headers as needed ...
+//     },
+//     "body": {
+//         ... tool-specific parameters ...
+//     }
+// }
+//
+// The "headers" section contains HTTP headers to be sent with the request.
+// The "body" section contains the actual parameters for the tool.
+//
+// For backward compatibility, if the request is sent with just a JSON object without
+// the headers/body structure, it will be treated as the body content.
+
 import (
 	"context"
 	"encoding/json"
@@ -96,7 +119,7 @@ func (h *MCPServerHandler) RegisterRoutes(router *gin.Engine) {
 	mcpProtoGroup.GET("/prompts", h.GetMCPServerPrompts)
 
 	// Add dynamic routing for tools invocation through MCP protocol
-	mcpProtoGroup.POST("/tools/:tool", h.InvokeToolMCP)
+	mcpProtoGroup.POST("/tools/:tool", h.InvokeToolByName)
 }
 
 // GetAllMCPServers returns all MCP servers
@@ -380,6 +403,92 @@ func (h *MCPServerHandler) DeactivateMCPServer(c *gin.Context) {
 }
 
 // InvokeTool invokes a tool in an MCP Server
+func (h *MCPServerHandler) InvokeToolByName(c *gin.Context) {
+	name := c.Param("name")
+	toolName := c.Param("tool")
+
+	fmt.Printf("---InvokeToolByName--INFO: Processing tool invocation by name request: server=%s, tool=%s\n", name, toolName)
+
+	// Get MCP Server by name
+	server, err := h.mcpRepo.GetByName(c.Request.Context(), name)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			fmt.Printf("ERROR: MCP Server not found: name=%s\n", name)
+			c.JSON(http.StatusNotFound, gin.H{"error": "MCP Server not found"})
+			return
+		}
+		fmt.Printf("ERROR: Failed to get MCP server: name=%s, error=%v\n", name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check if the server is active
+	if server.Status != "active" {
+		fmt.Printf("ERROR: MCP Server is not active: name=%s, status=%s\n", name, server.Status)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "MCP Server is not active"})
+		return
+	}
+
+	// Check if the tool exists
+	toolExists := false
+	for _, allowed := range server.AllowTools {
+		if allowed == toolName {
+			toolExists = true
+			break
+		}
+	}
+	if !toolExists {
+		fmt.Printf("ERROR: Tool not found or not allowed: server=%s, tool=%s\n", name, toolName)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Tool not found or not allowed"})
+		return
+	}
+
+	// IMPORTANT: Register the server with the MCP service if it's not already registered
+	// This ensures the server is available in the MCP service's in-memory map
+	fmt.Printf("INFO: Ensuring server is registered with MCP service: name=%s\n", name)
+	err = h.mcpService.RegisterServer(server)
+	if err != nil {
+		fmt.Printf("ERROR: Failed to register server with MCP service: name=%s, error=%v\n", name, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register server: " + err.Error()})
+		return
+	}
+
+	// Get tool parameters
+	var params map[string]interface{}
+	if err := c.ShouldBindJSON(&params); err != nil {
+		fmt.Printf("WARNING: Could not parse request body, using empty params: error=%v\n", err)
+		params = make(map[string]interface{})
+	} else {
+		fmt.Printf("INFO: Parsed parameters: %v\n", params)
+	}
+
+	// Execute the tool
+	fmt.Printf("INFO: Executing tool request: server=%s, tool=%s\n", name, toolName)
+	result, err := h.mcpService.HandleToolRequest(c.Request.Context(), server.ID, toolName, params)
+	if err != nil {
+		fmt.Printf("ERROR: Failed to execute tool: server=%s, tool=%s, error=%v\n", name, toolName, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to execute tool: " + err.Error()})
+		return
+	}
+
+	fmt.Printf("INFO: Tool executed successfully: server=%s, tool=%s\n", name, toolName)
+
+	// Try to parse result as JSON
+	var jsonResult interface{}
+	if json.Valid([]byte(result)) {
+		if err := json.Unmarshal([]byte(result), &jsonResult); err == nil {
+			fmt.Printf("INFO: Returning JSON result\n")
+			c.JSON(http.StatusOK, jsonResult)
+			return
+		}
+	}
+
+	// If not valid JSON, return as text
+	fmt.Printf("INFO: Returning text result\n")
+	c.JSON(http.StatusOK, gin.H{"result": result})
+}
+
+// InvokeTool invokes a tool in an MCP Server
 func (h *MCPServerHandler) InvokeTool(c *gin.Context) {
 	id := c.Param("id")
 	toolName := c.Param("tool")
@@ -525,47 +634,308 @@ func (h *MCPServerHandler) GetMCPServerTools(c *gin.Context) {
 	// Format tools according to MCP protocol specification
 	toolsResponse := make([]map[string]interface{}, 0, len(server.Tools))
 	for _, tool := range server.Tools {
-		// Create a properties map for the parameters
-		properties := make(map[string]interface{})
-		required := []string{}
+		// Create parameters structure with headers and body separation
+		parametersSchema := map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"headers": map[string]interface{}{
+					"type":        "object",
+					"description": "HTTP headers to include in the request",
+					"properties": map[string]interface{}{
+						"authorization": map[string]interface{}{
+							"type":        "string",
+							"description": "Bearer token for authentication",
+						},
+						"content-type": map[string]interface{}{
+							"type":        "string",
+							"description": "Content type header",
+							"default":     "application/json;charset=UTF-8",
+						},
+						"accept": map[string]interface{}{
+							"type":        "string",
+							"description": "Accept header",
+							"default":     "application/json, text/plain, */*",
+						},
+					},
+				},
+				"body": map[string]interface{}{
+					"type":        "object",
+					"description": "Request body data",
+				},
+			},
+			"required": []string{"body"},
+		}
 
-		// Extract parameters from URL path
-		// Look for parameters in the format {paramName}
+		// Extract parameters from URL path and add to body properties
+		bodyProperties := make(map[string]interface{})
+		requiredBodyParams := []string{}
+
+		// Look for parameters in the URL path format {paramName}
 		url := tool.RequestTemplate.URL
 		urlParams := extractURLParams(url)
 		for _, param := range urlParams {
-			properties[param] = map[string]interface{}{
+			bodyProperties[param] = map[string]interface{}{
 				"type":        "string",
 				"description": fmt.Sprintf("Path parameter '%s'", param),
 			}
-			required = append(required, param)
+			requiredBodyParams = append(requiredBodyParams, param)
 		}
 
-		// Add query parameters if they can be inferred
-		// If using a POST/PUT method, add a generic "data" parameter
-		if tool.RequestTemplate.Method == "POST" || tool.RequestTemplate.Method == "PUT" || tool.RequestTemplate.Method == "PATCH" {
-			properties["data"] = map[string]interface{}{
-				"type":        "object",
-				"description": "Request body data",
+		// Add query parameters to body properties if they can be inferred from the URL
+		queryParams := extractQueryParams(url)
+		for paramName, paramDefault := range queryParams {
+			bodyProperties[paramName] = map[string]interface{}{
+				"type":        "string",
+				"description": fmt.Sprintf("Query parameter '%s'", paramName),
+				"default":     paramDefault,
 			}
-			required = append(required, "data")
+			// Query parameters are often optional, so not adding to required
 		}
 
-		// Define a schema object for the parameters
+		// Add body parameters based on the request template
+		if tool.RequestTemplate.Method == "POST" || tool.RequestTemplate.Method == "PUT" || tool.RequestTemplate.Method == "PATCH" {
+			// Extract params from request template if available
+			bodyParams := extractBodyParams(tool.RequestTemplate.Body)
+			if len(bodyParams) > 0 {
+				for paramName, paramInfo := range bodyParams {
+					bodyProperties[paramName] = paramInfo
+					if paramInfo["required"] == true {
+						requiredBodyParams = append(requiredBodyParams, paramName)
+					}
+				}
+			}
+		}
+
+		// Update the body properties in the parameters schema
+		bodySchema := parametersSchema["properties"].(map[string]interface{})["body"].(map[string]interface{})
+		bodySchema["properties"] = bodyProperties
+		bodySchema["required"] = requiredBodyParams
+
+		// Add headers from template to header properties
+		headerProperties := parametersSchema["properties"].(map[string]interface{})["headers"].(map[string]interface{})["properties"].(map[string]interface{})
+		for headerName, headerValue := range tool.RequestTemplate.Headers {
+			headerProperties[headerName] = map[string]interface{}{
+				"type":        "string",
+				"description": fmt.Sprintf("Header '%s'", headerName),
+				"default":     headerValue,
+			}
+		}
+
+		// Generate examples with the correct format
+		examples := generateParameterExamplesWithHeadersAndBody(tool, bodyProperties, requiredBodyParams, headerProperties)
+
 		toolDef := map[string]interface{}{
 			"name":        tool.Name,
 			"description": tool.Description,
-			"parameters": map[string]interface{}{
-				"type":       "object",
-				"properties": properties,
-				"required":   required,
-			},
+			"parameters":  parametersSchema,
+			"examples":    examples,
 		}
 
 		toolsResponse = append(toolsResponse, toolDef)
 	}
 
 	c.JSON(http.StatusOK, toolsResponse)
+}
+
+// generateParameterExamplesWithHeadersAndBody creates example parameter objects with separated headers and body
+func generateParameterExamplesWithHeadersAndBody(
+	tool models.Tool,
+	bodyProperties map[string]interface{},
+	requiredBodyParams []string,
+	headerProperties map[string]interface{},
+) []map[string]interface{} {
+	// Create example body
+	exampleBody := make(map[string]interface{})
+
+	// Add required parameters to body
+	for _, paramName := range requiredBodyParams {
+		propInfo, ok := bodyProperties[paramName].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		paramType, _ := propInfo["type"].(string)
+		switch paramType {
+		case "string":
+			if exampleValue, ok := propInfo["example"].(string); ok {
+				exampleBody[paramName] = exampleValue
+			} else if strings.Contains(paramName, "id") {
+				exampleBody[paramName] = "example-id-123"
+			} else if strings.Contains(paramName, "name") {
+				exampleBody[paramName] = "example_name"
+			} else if strings.Contains(paramName, "user") {
+				exampleBody[paramName] = "user123"
+			} else if strings.Contains(paramName, "password") {
+				exampleBody[paramName] = "password123"
+			} else if strings.Contains(paramName, "status") {
+				exampleBody[paramName] = "0"
+			} else if strings.Contains(paramName, "sex") {
+				exampleBody[paramName] = "0"
+			} else {
+				exampleBody[paramName] = "example_value"
+			}
+		case "number":
+			if exampleValue, ok := propInfo["example"].(float64); ok {
+				exampleBody[paramName] = exampleValue
+			} else {
+				exampleBody[paramName] = 42
+			}
+		case "boolean":
+			if exampleValue, ok := propInfo["example"].(bool); ok {
+				exampleBody[paramName] = exampleValue
+			} else {
+				exampleBody[paramName] = true
+			}
+		case "object":
+			if exampleObj, ok := propInfo["example"].(map[string]interface{}); ok {
+				exampleBody[paramName] = exampleObj
+			} else {
+				exampleBody[paramName] = map[string]interface{}{
+					"key1": "value1",
+					"key2": 42,
+					"key3": true,
+				}
+			}
+		case "array":
+			if exampleArr, ok := propInfo["example"].([]interface{}); ok {
+				exampleBody[paramName] = exampleArr
+			} else {
+				exampleBody[paramName] = []interface{}{"example_item"}
+			}
+		default:
+			exampleBody[paramName] = "example_value"
+		}
+	}
+
+	// If no required body params, add some representative data
+	if len(requiredBodyParams) == 0 && tool.RequestTemplate.Method == "POST" {
+		if tool.Name == "createUser" || strings.Contains(strings.ToLower(tool.Name), "user") {
+			exampleBody = map[string]interface{}{
+				"userName": "example_user",
+				"password": "example_password",
+				"nickName": "Example User",
+				"status":   "0",
+				"sex":      "0",
+			}
+		} else {
+			exampleBody = map[string]interface{}{
+				"key1": "value1",
+				"key2": 42,
+				"key3": true,
+			}
+		}
+	}
+
+	// Create example headers
+	exampleHeaders := map[string]interface{}{
+		"authorization":   "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...(your token)",
+		"content-type":    "application/json;charset=UTF-8",
+		"accept":          "application/json, text/plain, */*",
+		"accept-language": "zh_CN",
+	}
+
+	// Add custom headers from the tool definition
+	for headerName, _ := range headerProperties {
+		if _, exists := exampleHeaders[headerName]; !exists {
+			if exampleValue, ok := headerProperties[headerName].(map[string]interface{})["default"].(string); ok {
+				exampleHeaders[headerName] = exampleValue
+			} else {
+				exampleHeaders[headerName] = "example-value"
+			}
+		}
+	}
+
+	return []map[string]interface{}{
+		{
+			"name": "Basic Example",
+			"parameters": map[string]interface{}{
+				"headers": exampleHeaders,
+				"body":    exampleBody,
+			},
+		},
+	}
+}
+
+// extractQueryParams extracts query parameters from a URL
+// e.g. "/users?name=default&age=10" would return map["name"]="default", map["age"]="10"
+func extractQueryParams(url string) map[string]string {
+	params := make(map[string]string)
+
+	// Find question mark separating path from query
+	parts := strings.Split(url, "?")
+	if len(parts) < 2 {
+		return params
+	}
+
+	// Parse query parameters
+	queryPart := parts[1]
+	queryParams := strings.Split(queryPart, "&")
+	for _, param := range queryParams {
+		keyValue := strings.Split(param, "=")
+		if len(keyValue) == 2 {
+			params[keyValue[0]] = keyValue[1]
+		} else if len(keyValue) == 1 {
+			// Parameter without value
+			params[keyValue[0]] = ""
+		}
+	}
+
+	return params
+}
+
+// extractBodyParams tries to infer parameters from a request body template
+func extractBodyParams(bodyTemplate string) map[string]map[string]interface{} {
+	params := make(map[string]map[string]interface{})
+
+	// If empty, return empty map
+	if bodyTemplate == "" {
+		return params
+	}
+
+	// Try to parse as JSON for inference
+	var jsonTemplate map[string]interface{}
+	err := json.Unmarshal([]byte(bodyTemplate), &jsonTemplate)
+	if err == nil {
+		// Successfully parsed as JSON object
+		for key, val := range jsonTemplate {
+			paramInfo := map[string]interface{}{
+				"required": true, // Default to required
+			}
+
+			// Infer type from value
+			switch v := val.(type) {
+			case string:
+				paramInfo["type"] = "string"
+				paramInfo["description"] = fmt.Sprintf("String parameter '%s'", key)
+				paramInfo["example"] = v
+			case float64:
+				paramInfo["type"] = "number"
+				paramInfo["description"] = fmt.Sprintf("Numeric parameter '%s'", key)
+				paramInfo["example"] = v
+			case bool:
+				paramInfo["type"] = "boolean"
+				paramInfo["description"] = fmt.Sprintf("Boolean parameter '%s'", key)
+				paramInfo["example"] = v
+			case []interface{}:
+				paramInfo["type"] = "array"
+				paramInfo["description"] = fmt.Sprintf("Array parameter '%s'", key)
+				if len(v) > 0 {
+					paramInfo["example"] = v[:1] // Just take first item as example
+				}
+			case map[string]interface{}:
+				paramInfo["type"] = "object"
+				paramInfo["description"] = fmt.Sprintf("Object parameter '%s'", key)
+				paramInfo["example"] = v
+			default:
+				paramInfo["type"] = "string"
+				paramInfo["description"] = fmt.Sprintf("Parameter '%s'", key)
+			}
+
+			params[key] = paramInfo
+		}
+	}
+
+	return params
 }
 
 // extractURLParams extracts parameters from a URL path
@@ -583,6 +953,74 @@ func extractURLParams(url string) []string {
 	}
 
 	return params
+}
+
+// generateParameterExamples creates example parameter objects for a tool
+func generateParameterExamples(tool models.Tool, properties map[string]interface{}, required []string) []map[string]interface{} {
+	// Create at least one example
+	exampleParams := make(map[string]interface{})
+
+	// Add required parameters with reasonable defaults
+	for _, paramName := range required {
+		propInfo, ok := properties[paramName].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		paramType, _ := propInfo["type"].(string)
+		switch paramType {
+		case "string":
+			if exampleValue, ok := propInfo["example"].(string); ok {
+				exampleParams[paramName] = exampleValue
+			} else if strings.Contains(paramName, "id") {
+				exampleParams[paramName] = "example-id-123"
+			} else if strings.Contains(paramName, "name") {
+				exampleParams[paramName] = "example_name"
+			} else {
+				exampleParams[paramName] = "example_value"
+			}
+		case "number":
+			if exampleValue, ok := propInfo["example"].(float64); ok {
+				exampleParams[paramName] = exampleValue
+			} else {
+				exampleParams[paramName] = 42
+			}
+		case "boolean":
+			if exampleValue, ok := propInfo["example"].(bool); ok {
+				exampleParams[paramName] = exampleValue
+			} else {
+				exampleParams[paramName] = true
+			}
+		case "object":
+			if paramName == "data" {
+				// For generic data objects, provide a reasonable example
+				exampleParams[paramName] = map[string]interface{}{
+					"key1": "value1",
+					"key2": 42,
+					"key3": true,
+				}
+			} else if exampleObj, ok := propInfo["example"].(map[string]interface{}); ok {
+				exampleParams[paramName] = exampleObj
+			} else {
+				exampleParams[paramName] = map[string]interface{}{}
+			}
+		case "array":
+			if exampleArr, ok := propInfo["example"].([]interface{}); ok {
+				exampleParams[paramName] = exampleArr
+			} else {
+				exampleParams[paramName] = []interface{}{"example_item"}
+			}
+		default:
+			exampleParams[paramName] = "example_value"
+		}
+	}
+
+	return []map[string]interface{}{
+		{
+			"name":       "Basic Example",
+			"parameters": exampleParams,
+		},
+	}
 }
 
 // GetMCPServerResources provides resources metadata conforming to MCP protocol
@@ -979,13 +1417,31 @@ func truncateString(s string, maxLen int) string {
 func generatePythonClientExample(server *models.MCPServer, baseUrl string) string {
 	// Create a sample tool to use in the example
 	var sampleTool models.Tool
+	var sampleParams string
+
 	if len(server.Tools) > 0 {
 		sampleTool = server.Tools[0]
+		// Generate parameters based on the tool's requirements
+		params := generateExampleParamsForTool(sampleTool)
+		paramsBytes, _ := json.MarshalIndent(params, "        ", "    ")
+		sampleParams = string(paramsBytes)
 	} else {
 		sampleTool = models.Tool{
 			Name:        "example_tool",
 			Description: "Example tool",
 		}
+		sampleParams = `{
+        "headers": {
+            "authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...(your token)",
+            "content-type": "application/json;charset=UTF-8",
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "zh_CN"
+        },
+        "body": {
+            # Add required parameters for the tool
+            # For example: "userName": "example_user"
+        }
+    }`
 	}
 
 	return fmt.Sprintf(`
@@ -1007,8 +1463,14 @@ class MCPClient:
             raise Exception(f"Failed to get tools: {response.text}")
     
     def invoke_tool(self, tool_name, parameters):
-        """Invoke a tool on the MCP server"""
+        """Invoke a tool on the MCP server
+        
+        Args:
+            tool_name: The name of the tool to invoke
+            parameters: Dictionary with 'headers' and 'body' keys
+        """
         url = f"{self.base_url}/api/mcp-server/{self.server_name}/tools/{tool_name}"
+        
         response = requests.post(url, json=parameters)
         if response.status_code == 200:
             return response.json()
@@ -1026,28 +1488,45 @@ if __name__ == "__main__":
     
     # Invoke a specific tool
     try:
-        # Example parameters - adjust based on the actual tool requirements
-        params = {
-            # Add required parameters for the '%s' tool
-        }
+        # Example parameters for the '%s' tool
+        params = %s
+        
         result = client.invoke_tool("%s", params)
         print(f"Tool result: {json.dumps(result, indent=2)}")
     except Exception as e:
         print(f"Error: {e}")
-`, baseUrl, server.Name, sampleTool.Name, sampleTool.Name)
+`, baseUrl, server.Name, sampleTool.Name, sampleParams, sampleTool.Name)
 }
 
 // generateJavaScriptClientExample creates JavaScript code to interact with the MCP server
 func generateJavaScriptClientExample(server *models.MCPServer, baseUrl string) string {
 	// Create a sample tool to use in the example
 	var sampleTool models.Tool
+	var sampleParams string
+
 	if len(server.Tools) > 0 {
 		sampleTool = server.Tools[0]
+		// Generate parameters based on the tool's requirements
+		params := generateExampleParamsForTool(sampleTool)
+		paramsBytes, _ := json.MarshalIndent(params, "    ", "  ")
+		sampleParams = string(paramsBytes)
 	} else {
 		sampleTool = models.Tool{
 			Name:        "example_tool",
 			Description: "Example tool",
 		}
+		sampleParams = `{
+    "headers": {
+      "authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...(your token)",
+      "content-type": "application/json;charset=UTF-8",
+      "accept": "application/json, text/plain, */*",
+      "accept-language": "zh_CN"
+    },
+    "body": {
+      // Add required parameters for the tool
+      // For example: "userName": "example_user"
+    }
+  }`
 	}
 
 	return fmt.Sprintf(`
@@ -1071,12 +1550,15 @@ class MCPClient {
 
   async invokeTool(toolName, parameters) {
     const url = this.baseUrl + '/api/mcp-server/' + this.serverName + '/tools/' + toolName;
+    
+    // Extract headers and body from parameters
+    const headers = parameters.headers || {};
+    const body = parameters.body || {};
+    
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(parameters)
+      headers: headers,
+      body: JSON.stringify(body)
     });
     
     if (!response.ok) {
@@ -1098,9 +1580,7 @@ async function run() {
     console.log('Available tools:', tools);
     
     // Invoke a specific tool
-    const params = {
-      // Add required parameters for the '%s' tool
-    };
+    const params = %s;
     
     const result = await client.invokeTool('%s', params);
     console.log('Tool result:', result);
@@ -1111,7 +1591,97 @@ async function run() {
 
 // Run the example
 run();
-`, baseUrl, server.Name, sampleTool.Name, sampleTool.Name)
+`, baseUrl, server.Name, sampleParams, sampleTool.Name)
+}
+
+// generateExampleParamsForTool creates sample parameters based on tool definition
+func generateExampleParamsForTool(tool models.Tool) map[string]interface{} {
+	// Create the main structure with headers and body
+	params := map[string]interface{}{
+		"headers": map[string]interface{}{
+			"authorization":   "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...(your token)",
+			"content-type":    "application/json;charset=UTF-8",
+			"accept":          "application/json, text/plain, */*",
+			"accept-language": "zh_CN",
+		},
+		"body": make(map[string]interface{}),
+	}
+
+	bodyParams := params["body"].(map[string]interface{})
+
+	// Extract path parameters
+	urlParams := extractURLParams(tool.RequestTemplate.URL)
+	for _, param := range urlParams {
+		if strings.Contains(param, "id") {
+			bodyParams[param] = "example-id-123"
+		} else if strings.Contains(param, "name") {
+			bodyParams[param] = "example_name"
+		} else {
+			bodyParams[param] = "example_value"
+		}
+	}
+
+	// Add query parameters
+	queryParams := extractQueryParams(tool.RequestTemplate.URL)
+	for name, value := range queryParams {
+		bodyParams[name] = value
+	}
+
+	// Add body parameters if it's a POST/PUT/PATCH method
+	if tool.RequestTemplate.Method == "POST" || tool.RequestTemplate.Method == "PUT" || tool.RequestTemplate.Method == "PATCH" {
+		// Try to extract from body template
+		extractedBodyParams := extractBodyParams(tool.RequestTemplate.Body)
+		if len(extractedBodyParams) > 0 {
+			for paramName, paramInfo := range extractedBodyParams {
+				if example, ok := paramInfo["example"]; ok {
+					bodyParams[paramName] = example
+				} else {
+					// Create a default based on type
+					paramType, _ := paramInfo["type"].(string)
+					switch paramType {
+					case "string":
+						bodyParams[paramName] = "example_string"
+					case "number":
+						bodyParams[paramName] = 42
+					case "boolean":
+						bodyParams[paramName] = true
+					case "object":
+						bodyParams[paramName] = map[string]interface{}{
+							"key": "value",
+						}
+					case "array":
+						bodyParams[paramName] = []interface{}{"item1"}
+					default:
+						bodyParams[paramName] = "example_value"
+					}
+				}
+			}
+		} else {
+			// Special case for user creation
+			if tool.Name == "createUser" || strings.Contains(strings.ToLower(tool.Name), "user") {
+				bodyParams = map[string]interface{}{
+					"userName": "example_user",
+					"password": "example_password",
+					"nickName": "Example User",
+					"status":   "0",
+					"sex":      "0",
+				}
+				params["body"] = bodyParams // Update the reference
+			} else {
+				// Generic data parameter
+				bodyParams["key1"] = "value1"
+				bodyParams["key2"] = 42
+			}
+		}
+	}
+
+	// Add tool-specific headers from template
+	headersParams := params["headers"].(map[string]interface{})
+	for headerName, headerValue := range tool.RequestTemplate.Headers {
+		headersParams[headerName] = headerValue
+	}
+
+	return params
 }
 
 // generateGoClientExample creates Go code to interact with the MCP server
