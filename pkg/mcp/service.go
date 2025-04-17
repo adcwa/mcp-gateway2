@@ -147,14 +147,6 @@ func (s *MCPService) RegisterServer(mcpServer *models.MCPServer) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Save the YAML configuration
-	yamlPath, err := s.SaveYAML(mcpServer)
-	if err != nil {
-		fmt.Printf("ERROR: Failed to save YAML for MCP server: id=%s, error=%v\n", mcpServer.ID, err)
-		return err
-	}
-	fmt.Printf("INFO: Saved YAML configuration to %s\n", yamlPath)
-
 	// Check if the server has tools
 	if len(mcpServer.Tools) == 0 {
 		fmt.Printf("WARNING: MCP server has no tools: id=%s\n", mcpServer.ID)
@@ -238,7 +230,17 @@ func (s *MCPService) executeToolRequest(ctx context.Context, server *models.MCPS
 		return "", err
 	}
 
-	fmt.Printf("INFO: Received response with status %d for tool %s\n", resp.StatusCode, tool.Name)
+	// 打印详细的响应信息
+	fmt.Printf("INFO: ======== RESPONSE DETAILS ========\n")
+	fmt.Printf("INFO: Status: %d %s\n", resp.StatusCode, resp.Status)
+	fmt.Printf("INFO: Headers:\n")
+	for key, values := range resp.Header {
+		for _, value := range values {
+			fmt.Printf("INFO:   %s: %s\n", key, value)
+		}
+	}
+	fmt.Printf("INFO: Body: %s\n", string(body))
+	fmt.Printf("INFO: ================================\n")
 
 	// If the status code is not successful, return an error
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -254,6 +256,8 @@ func (s *MCPService) executeToolRequest(ctx context.Context, server *models.MCPS
 		return "", err
 	}
 
+	// 打印处理后的结果
+	fmt.Printf("INFO: Processed response result: %s\n", result)
 	return result, nil
 }
 
@@ -283,18 +287,64 @@ func (s *MCPService) createRequest(ctx context.Context, tool *models.Tool, param
 
 	fmt.Printf("DEBUG: Final URL after parameter replacement: %s\n", url)
 
+	// Extract user-provided headers, body, and other parameters from params
+	userHeaders := map[string]string{}
+	userBody := map[string]interface{}{}
+
+	// Check if headers are provided in the params
+	if headersParam, ok := params["headers"]; ok {
+		if headersMap, ok := headersParam.(map[string]interface{}); ok {
+			for k, v := range headersMap {
+				userHeaders[k] = fmt.Sprintf("%v", v)
+			}
+			// Remove headers from params to avoid confusion with URL or query params
+			delete(params, "headers")
+		}
+	}
+
+	// Check if body is provided in the params
+	if bodyParam, ok := params["body"]; ok {
+		if bodyMap, ok := bodyParam.(map[string]interface{}); ok {
+			userBody = bodyMap
+			// Remove body from params to avoid confusion with URL or query params
+			delete(params, "body")
+		} else if bodyStr, ok := bodyParam.(string); ok && bodyStr != "" {
+			// Try to parse as JSON if it's a string
+			if err := json.Unmarshal([]byte(bodyStr), &userBody); err != nil {
+				// If not valid JSON, treat it as a raw string body
+				userBody = map[string]interface{}{"raw": bodyStr}
+			}
+			// Remove body from params
+			delete(params, "body")
+		}
+	}
+
 	// Create request body if method is not GET
 	var reqBody io.Reader
-	if method != "GET" && tool.RequestTemplate.Body != "" {
-		// Replace parameter placeholders in the request body template
-		bodyTemplate := tool.RequestTemplate.Body
-		bodyJson, err := replaceParams(bodyTemplate, params)
-		if err != nil {
-			fmt.Printf("ERROR: Failed to replace parameters in request body: %v\n", err)
-			return nil, err
+	var bodyJson string
+	if method != "GET" {
+		if len(userBody) > 0 {
+			// User provided a body
+			jsonData, err := json.Marshal(userBody)
+			if err != nil {
+				fmt.Printf("ERROR: Failed to marshal user body: %v\n", err)
+				return nil, err
+			}
+			bodyJson = string(jsonData)
+			fmt.Printf("DEBUG: Using user-provided body: %s\n", bodyJson)
+			reqBody = bytes.NewBuffer(jsonData)
+		} else if tool.RequestTemplate.Body != "" {
+			// Use template body with parameter replacement
+			bodyTemplate := tool.RequestTemplate.Body
+			var err error
+			bodyJson, err = replaceParams(bodyTemplate, params)
+			if err != nil {
+				fmt.Printf("ERROR: Failed to replace parameters in request body: %v\n", err)
+				return nil, err
+			}
+			fmt.Printf("DEBUG: Request body after parameter replacement: %s\n", bodyJson)
+			reqBody = bytes.NewBuffer([]byte(bodyJson))
 		}
-		fmt.Printf("DEBUG: Request body after parameter replacement: %s\n", bodyJson)
-		reqBody = bytes.NewBuffer([]byte(bodyJson))
 	}
 
 	// Create request
@@ -304,10 +354,16 @@ func (s *MCPService) createRequest(ctx context.Context, tool *models.Tool, param
 		return nil, err
 	}
 
-	// Add headers
+	// Add default headers from tool definition first
 	for key, value := range tool.RequestTemplate.Headers {
 		req.Header.Set(key, value)
-		fmt.Printf("DEBUG: Added header: %s: %s\n", key, value)
+		fmt.Printf("DEBUG: Added default header: %s: %s\n", key, value)
+	}
+
+	// Override with user-provided headers
+	for key, value := range userHeaders {
+		req.Header.Set(key, value)
+		fmt.Printf("DEBUG: Overrode with user header: %s: %s\n", key, value)
 	}
 
 	// Set default Content-Type if not provided and body exists
@@ -316,8 +372,8 @@ func (s *MCPService) createRequest(ctx context.Context, tool *models.Tool, param
 		fmt.Printf("DEBUG: Added default Content-Type: application/json\n")
 	}
 
-	// Handle query parameters for GET requests
-	if method == "GET" && len(params) > 0 {
+	// Handle query parameters for GET requests (or other methods if URL contains query params)
+	if len(params) > 0 {
 		q := req.URL.Query()
 		for key, value := range params {
 			// Skip parameters that were used in the URL template
@@ -332,6 +388,23 @@ func (s *MCPService) createRequest(ctx context.Context, tool *models.Tool, param
 		req.URL.RawQuery = q.Encode()
 		fmt.Printf("DEBUG: Final query string: %s\n", req.URL.RawQuery)
 	}
+
+	// 打印完整的请求信息
+	fmt.Printf("INFO: ======== REQUEST DETAILS ========\n")
+	fmt.Printf("INFO: Method: %s\n", req.Method)
+	fmt.Printf("INFO: URL: %s\n", req.URL.String())
+	fmt.Printf("INFO: Headers:\n")
+	for key, values := range req.Header {
+		for _, value := range values {
+			fmt.Printf("INFO:   %s: %s\n", key, value)
+		}
+	}
+	if reqBody != nil {
+		fmt.Printf("INFO: Body: %s\n", bodyJson)
+	} else {
+		fmt.Printf("INFO: Body: <none>\n")
+	}
+	fmt.Printf("INFO: ================================\n")
 
 	return req, nil
 }

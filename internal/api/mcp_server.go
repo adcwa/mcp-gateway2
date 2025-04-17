@@ -40,6 +40,7 @@ func (h *MCPServerHandler) RegisterRoutes(router *gin.Engine) {
 	mcpGroup.GET("/:id/versions/:version", h.GetMCPServerByVersion)
 	mcpGroup.POST("/:id/register", h.RegisterMCPServer)
 	mcpGroup.POST("/:id/activate", h.ActivateMCPServer)
+	mcpGroup.POST("/:id/deactivate", h.DeactivateMCPServer)
 	mcpGroup.POST("/:id/tools/:tool", h.InvokeTool)
 	mcpGroup.GET("/:id/http-interfaces", h.GetMCPServerHTTPInterfaces)
 }
@@ -244,6 +245,36 @@ func (h *MCPServerHandler) ActivateMCPServer(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "MCP Server activated successfully"})
+}
+
+// DeactivateMCPServer deactivates an MCP Server
+func (h *MCPServerHandler) DeactivateMCPServer(c *gin.Context) {
+	id := c.Param("id")
+
+	// Get MCP Server
+	server, err := h.mcpRepo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "MCP Server not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check if server is already inactive
+	if server.Status != "active" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "MCP Server is not active"})
+		return
+	}
+
+	// Update status to inactive
+	if err := h.mcpRepo.UpdateStatus(c.Request.Context(), id, "inactive"); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "MCP Server deactivated successfully"})
 }
 
 // InvokeTool invokes a tool in an MCP Server

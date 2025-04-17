@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -197,86 +198,143 @@ func (h *HTTPInterfaceHandler) CreateFromCurl(c *gin.Context) {
 }
 
 // parseCurlCommand parses a curl command and converts it to an HTTP interface
-func parseCurlCommand(curlCmd, name, description string) (*models.HTTPInterface, error) {
-	// Initialize HTTP interface
+func parseCurlCommand(curlCommand string, name string, description string) (*models.HTTPInterface, error) {
+	// Clean up the curl command
+	curlCommand = strings.TrimSpace(curlCommand)
+	curlCommand = strings.Replace(curlCommand, "\\\n", " ", -1) // Handle line continuations
+
+	// Extract the HTTP method
+	methodMatch := regexp.MustCompile(`-X\s+([A-Z]+)`).FindStringSubmatch(curlCommand)
+	method := "GET" // Default to GET
+	if len(methodMatch) > 1 {
+		method = methodMatch[1]
+	}
+
+	// Extract the URL
+	urlMatch := regexp.MustCompile(`curl\s+['"]?([^'"]*?)['"]?(\s+-|\s*$)`).FindStringSubmatch(curlCommand)
+	if len(urlMatch) < 2 {
+		return nil, errors.New("no URL found in curl command")
+	}
+	url := urlMatch[1]
+
+	// Extract headers
+	headerRegex := regexp.MustCompile(`-H\s+['"]([^'"]*)['"]`)
+	headerMatches := headerRegex.FindAllStringSubmatch(curlCommand, -1)
+	var headers []models.Header
+
+	for _, match := range headerMatches {
+		if len(match) < 2 {
+			continue
+		}
+
+		headerLine := match[1]
+		if headerLine == "" {
+			continue
+		}
+
+		parts := strings.SplitN(headerLine, ":", 2)
+		if len(parts) < 2 {
+			continue
+		}
+
+		name := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		// Skip empty headers
+		if name == "" {
+			continue
+		}
+
+		// Set some common headers as required if they have values
+		isRequired := false
+		nameLower := strings.ToLower(name)
+		if value != "" && (nameLower == "content-type" || nameLower == "accept" || nameLower == "authorization") {
+			isRequired = true
+		}
+
+		// Special handling for authorization header
+		if nameLower == "authorization" && value == "" {
+			// Skip empty authorization headers completely
+			continue
+		}
+
+		headers = append(headers, models.Header{
+			Name:         name,
+			Type:         "string", // Assuming string type for headers
+			Required:     isRequired,
+			Description:  fmt.Sprintf("The %s header", name),
+			DefaultValue: value, // Adding default value from the curl command
+		})
+	}
+
+	// Extract the request body
+	var requestBody *models.Body
+	// Use a regex pattern that works in Go's regexp package (no backreferences)
+	// First try to match single-quoted data
+	singleQuoteMatch := regexp.MustCompile(`--data(?:-raw)?\s+'([^']*)'`).FindStringSubmatch(curlCommand)
+	// Then try to match double-quoted data
+	doubleQuoteMatch := regexp.MustCompile(`--data(?:-raw)?\s+"([^"]*)"(?:\s+|$)`).FindStringSubmatch(curlCommand)
+
+	// Use whichever match succeeded
+	var data string
+	if len(singleQuoteMatch) > 1 {
+		data = singleQuoteMatch[1]
+	} else if len(doubleQuoteMatch) > 1 {
+		data = doubleQuoteMatch[1]
+	}
+
+	if data != "" {
+		// If we find a request body with data, set method to POST if not explicitly specified
+		if methodMatch == nil || len(methodMatch) <= 1 {
+			method = "POST"
+		}
+
+		// Try to determine content type from headers
+		var contentType string
+		for _, header := range headers {
+			if strings.ToLower(header.Name) == "content-type" {
+				contentType = header.DefaultValue
+				break
+			}
+		}
+
+		// Default to application/json if content-type not specified
+		if contentType == "" {
+			contentType = "application/json"
+		}
+
+		// Log the extracted data for debugging
+		fmt.Printf("Extracted request body data: %s\n", data)
+
+		// If we have JSON content but the body isn't valid JSON, try to fix it
+		isJSON := strings.Contains(strings.ToLower(contentType), "json")
+		if isJSON && !json.Valid([]byte(data)) {
+			// Try to see if it's a JSON string that needs to be unescaped
+			unescapedData := strings.ReplaceAll(data, `\"`, `"`)
+
+			// Check if the unescaped data is valid JSON
+			if json.Valid([]byte(unescapedData)) {
+				data = unescapedData
+			}
+		}
+
+		requestBody = &models.Body{
+			ContentType: contentType,
+			Schema:      data,
+			Example:     data,
+		}
+	}
+
+	// Create the HTTP interface with the extracted information
 	httpInterface := &models.HTTPInterface{
 		Name:        name,
 		Description: description,
-		Headers:     []models.Header{},
+		Method:      method,
+		Path:        url,
+		Headers:     headers,
 		Parameters:  []models.Param{},
-	}
-
-	// Clean up the command (remove "curl" prefix if present)
-	curlCmd = strings.TrimSpace(curlCmd)
-	if strings.HasPrefix(curlCmd, "curl ") {
-		curlCmd = strings.TrimPrefix(curlCmd, "curl ")
-	}
-
-	// Extract method
-	methodRegex := regexp.MustCompile(`-X\s+([A-Z]+)`)
-	if methodMatch := methodRegex.FindStringSubmatch(curlCmd); len(methodMatch) > 1 {
-		httpInterface.Method = methodMatch[1]
-	} else {
-		// Default to GET if no method specified
-		httpInterface.Method = "GET"
-		// Check if there's a data flag, which implies POST
-		if strings.Contains(curlCmd, " -d ") || strings.Contains(curlCmd, " --data ") {
-			httpInterface.Method = "POST"
-		}
-	}
-
-	// Extract URL
-	urlRegex := regexp.MustCompile(`[^-]('|")?(https?://[^'"]+)('|")?`)
-	if urlMatch := urlRegex.FindStringSubmatch(curlCmd); len(urlMatch) > 2 {
-		httpInterface.Path = urlMatch[2]
-	} else {
-		return nil, fmt.Errorf("no URL found in curl command")
-	}
-
-	// Extract headers
-	headerRegex := regexp.MustCompile(`-H\s+['"]([^:]+):\s*([^'"]+)['"]`)
-	headerMatches := headerRegex.FindAllStringSubmatch(curlCmd, -1)
-	for _, match := range headerMatches {
-		if len(match) > 2 {
-			header := models.Header{
-				Name:        match[1],
-				Description: "",
-				Required:    true,
-				Type:        "string",
-			}
-			httpInterface.Headers = append(httpInterface.Headers, header)
-		}
-	}
-
-	// Extract data/body if present
-	dataRegex := regexp.MustCompile(`-d\s+['"]([^'"]+)['"]`)
-	if dataMatch := dataRegex.FindStringSubmatch(curlCmd); len(dataMatch) > 1 {
-		// Check if data is JSON
-		if strings.HasPrefix(dataMatch[1], "{") && strings.HasSuffix(dataMatch[1], "}") {
-			httpInterface.RequestBody = &models.Body{
-				ContentType: "application/json",
-				Schema:      `{"type": "object"}`,
-				Example:     dataMatch[1],
-			}
-		} else {
-			httpInterface.RequestBody = &models.Body{
-				ContentType: "application/x-www-form-urlencoded",
-				Schema:      `{"type": "string"}`,
-				Example:     dataMatch[1],
-			}
-		}
-	}
-
-	// Add a default response
-	httpInterface.Responses = []models.Response{
-		{
-			StatusCode:  200,
-			Description: "Successful response",
-			Body: &models.Body{
-				ContentType: "application/json",
-				Schema:      `{"type": "object"}`,
-			},
-		},
+		RequestBody: requestBody,
+		Responses:   []models.Response{},
 	}
 
 	return httpInterface, nil

@@ -26,10 +26,11 @@ type HTTPInterface struct {
 
 // Header represents an HTTP header
 type Header struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
-	Required    bool   `json:"required"`
-	Type        string `json:"type" binding:"required,oneof=string integer number boolean array object"`
+	Name         string `json:"name" binding:"required"`
+	Description  string `json:"description"`
+	Required     bool   `json:"required"`
+	Type         string `json:"type" binding:"required,oneof=string integer number boolean array object"`
+	DefaultValue string `json:"defaultValue,omitempty"`
 }
 
 // Param represents a request parameter (query or path)
@@ -115,6 +116,39 @@ func (h *HTTPInterface) ConvertToOpenAPI() map[string]interface{} {
 					"type": header.Type,
 				},
 			}
+
+			// Add default value if present
+			if header.DefaultValue != "" {
+				schema := headerParam["schema"].(map[string]interface{})
+
+				// Try to parse the default value based on type
+				switch header.Type {
+				case "number", "integer":
+					// Try to parse as number
+					if val, err := strconv.ParseFloat(header.DefaultValue, 64); err == nil {
+						if header.Type == "integer" {
+							schema["default"] = int(val)
+						} else {
+							schema["default"] = val
+						}
+					}
+				case "boolean":
+					// Try to parse as boolean
+					if val, err := strconv.ParseBool(header.DefaultValue); err == nil {
+						schema["default"] = val
+					}
+				case "array", "object":
+					// Try to parse as JSON
+					var val interface{}
+					if err := json.Unmarshal([]byte(header.DefaultValue), &val); err == nil {
+						schema["default"] = val
+					}
+				default:
+					// Use as string
+					schema["default"] = header.DefaultValue
+				}
+			}
+
 			parameters = append(parameters, headerParam)
 		}
 		operation["parameters"] = parameters
@@ -281,6 +315,24 @@ func CreateFromOpenAPI(name string, description string, openAPI map[string]inter
 						if schema, ok := param["schema"].(map[string]interface{}); ok {
 							if paramType, ok := schema["type"].(string); ok {
 								header.Type = paramType
+							}
+
+							// Extract default value if present
+							if defaultValue, ok := schema["default"]; ok {
+								// Convert the default value to string
+								switch v := defaultValue.(type) {
+								case string:
+									header.DefaultValue = v
+								case float64:
+									header.DefaultValue = fmt.Sprintf("%g", v)
+								case bool:
+									header.DefaultValue = fmt.Sprintf("%t", v)
+								default:
+									// Try to marshal to JSON for complex types
+									if jsonBytes, err := json.Marshal(defaultValue); err == nil {
+										header.DefaultValue = string(jsonBytes)
+									}
+								}
 							}
 						}
 

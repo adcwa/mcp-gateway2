@@ -1,0 +1,12 @@
+server:
+    allowTools:
+        - weather-api
+    name: weather
+tools:
+    - description: Weather API request with query parameters
+      name: weather-api
+      requestTemplate:
+        method: GET
+        url: https://api.openweathermap.org/data/2.5/weather?q=London&appid={appid}
+      responseTemplate:
+        body: ""

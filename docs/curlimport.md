@@ -1,0 +1,25 @@
+
+curl 'https://vrdos-bom-ontest.inner.chj.cloud/custPartNumApplyForm/create' \
+  -H '_params: {}' \
+  -H 'accept: */*' \
+  -H 'accept-language: zh-CN,zh;q=0.9' \
+  -H 'authorization;' \
+  -H 'cache-control: no-cache' \
+  -H 'content-type: application/json' \
+  -b 'MONITOR_WEB_ID=be8957a9-48da-4117-abf5-15413ff4e622; authli_device_id=da983019-1a55-5359-92ee-86f20a5f0546; authli_device_reported=true; _clck=1cd2uuc%7C2%7Cful%7C0%7C0; JSESSIONID=C690B9EFBD423E654E1D36D75674FE0E; userIdentity=%7B%22userLoginName%22%3A%22wangwenlong%22%2C%22userToken%22%3A%2248u2rPo9tRhN+slEylAyvXWw12KpcIj5rX+iz0+Tre5VHOoiJJE7soh2Z5wy020lhQvyfpSzZ1IzEADa6dilyQ%3D%3D%22%2C%22Authorization%22%3A%22xxxx%22%2C%22locale%22%3A%22zh_CN%22%2C%22delegateMode%22%3Afalse%7D' \
+  -H 'origin: https://vrdos-bom-ontest.inner.chj.cloud' \
+  -H 'pragma: no-cache' \
+  -H 'priority: u=0, i' \
+  -H 'referer: https://vrdos-bom-ontest.inner.chj.cloud/static/index.html?forceLocal=true' \
+  -H 'sec-ch-ua: "Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"' \
+  -H 'sec-ch-ua-mobile: ?0' \
+  -H 'sec-ch-ua-platform: "macOS"' \
+  -H 'sec-fetch-dest: empty' \
+  -H 'sec-fetch-mode: cors' \
+  -H 'sec-fetch-site: same-origin' \
+  -H 'user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36' \
+  -H 'userlanguage: zh_CN' \
+  -H 'userloginname: wangwenlong' \
+  -H 'usertoken: 48u2rPo9tRhN+slEylAyvXWw12KpcIj5rX+iz0+Tre5VHOoiJJE7soh2Z5wy020lhQvyfpSzZ1IzEADa6dilyQ==' \
+  -H 'x-requested-with: XMLHttpRequest' \
+  --data-raw '{"formType":"Other"}'
